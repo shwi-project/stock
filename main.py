@@ -805,10 +805,30 @@ if ticker:
             # 가중 평균 (Prophet 60%, GBR 40%)
             ensemble_pred = prophet_pred * 0.6 + gbr_pred * 0.4
 
+            # ── 예측값 상한/하한 클램프 (일일 상하한가 ±30%) ──
+            _max_daily_pct = 0.15  # 현실적 1일 변동 상한 ±15%
+            _hard_limit_pct = 0.30  # 한국 주식 일일 상하한가
+            _current_close = float(cp)
+
+            # 예측값이 ±15% 초과 시 현재가 쪽으로 당김
+            _pred_pct_raw = (ensemble_pred - _current_close) / _current_close
+            if abs(_pred_pct_raw) > _max_daily_pct:
+                ensemble_pred = _current_close * (1 + np.sign(_pred_pct_raw) * _max_daily_pct)
+
+            # 절대 상하한가 ±30% 클램프
+            ensemble_pred = np.clip(ensemble_pred,
+                                    _current_close * (1 - _hard_limit_pct),
+                                    _current_close * (1 + _hard_limit_pct))
+
             fc_future_tmp["yhat"] = ensemble_pred
             spread = float(fc_future_tmp.iloc[-1]["yhat_upper"] - fc_future_tmp.iloc[-1]["yhat_lower"])
-            fc_future_tmp["yhat_upper"] = ensemble_pred + spread * 0.5
-            fc_future_tmp["yhat_lower"] = ensemble_pred - spread * 0.5
+            # 신뢰구간도 ±30% 내로 클램프
+            _max_spread = _current_close * _hard_limit_pct * 2
+            spread = min(spread, _max_spread)
+            fc_future_tmp["yhat_upper"] = min(ensemble_pred + spread * 0.5,
+                                              _current_close * (1 + _hard_limit_pct))
+            fc_future_tmp["yhat_lower"] = max(ensemble_pred - spread * 0.5,
+                                              _current_close * (1 - _hard_limit_pct))
 
             # ── 백테스팅 (최근 10영업일 MAPE) ──
             backtest_mape = None
@@ -902,13 +922,13 @@ if ticker:
         </div>
         """, unsafe_allow_html=True)
 
-        # 신뢰도 경고
+        # 신뢰도 경고 (클램프 적용 후 값 기준)
         _ci_spread_pct = abs(pred_upper - pred_lower) / max(cp, 1) * 100
-        if _ci_spread_pct > 10:
+        if _ci_spread_pct > 20:
             st.markdown(
                 '<div style="background:#2a1a1a;border:1px solid #5c2020;border-radius:6px;'
                 'padding:6px 12px;font-size:0.75rem;color:#fc5c5c;margin-bottom:0.4rem">'
-                '⚠️ 예측 신뢰 구간이 넓습니다 (변동폭 {:.1f}%). 변동성이 큰 구간이므로 참고용으로만 활용하세요.</div>'.format(_ci_spread_pct),
+                '⚠️ 변동성이 큰 종목입니다. 예측 참고용으로만 활용하세요.</div>',
                 unsafe_allow_html=True
             )
 
