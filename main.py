@@ -998,7 +998,7 @@ const candle = chart.addCandlestickSeries({{
   lastValueVisible:false, priceLineVisible:false,
 }});
 candle.setData(D.cdl);
-candle.createPriceLine({{ price:D.cp, color:'#c8d6e8', lineWidth:1, lineStyle:2, axisLabelVisible:true, title:'현재가' }});
+candle.createPriceLine({{ price:D.cp, color:'rgba(0,0,0,0)', lineWidth:0, lineStyle:2, axisLabelVisible:true, title:'현재가' }});
 const volSeries = chart.addHistogramSeries({{
   color:'rgba(120,120,120,0.5)', priceScaleId:'vol',
   lastValueVisible:false, priceLineVisible:false,
@@ -1018,7 +1018,7 @@ const seriesMap = {{}};
 maList.forEach(m => {{
   const s = chart.addLineSeries({{
     color:m.color, lineWidth:m.width, priceFormat:{{type:'price',precision:0,minMove:1}},
-    lastValueVisible:m.vis, priceLineVisible:m.vis, visible:m.vis, title:m.label,
+    lastValueVisible:m.vis, priceLineVisible:false, visible:m.vis, title:m.label,
   }});
   s.setData(m.data);
   seriesMap[m.label] = s;
@@ -1026,7 +1026,7 @@ maList.forEach(m => {{
 const predSeries = chart.addLineSeries({{
   color:'#f9a825', lineWidth:2, lineStyle:1,
   priceFormat:{{type:'price',precision:0,minMove:1}},
-  lastValueVisible:true, priceLineVisible:true, title:`AI예측(${{D.pred_days}}일)`,
+  lastValueVisible:true, priceLineVisible:false, title:`AI예측(${{D.pred_days}}일)`,
 }});
 predSeries.setData(D.pred_line);
 const upperSeries = chart.addLineSeries({{
@@ -1068,10 +1068,10 @@ legItems.forEach(item => {{
   el.onclick = () => {{
     const isHidden = el.classList.toggle('hidden');
     const show = !isHidden;
-    if (item.label==='AI예측') predSeries.applyOptions({{visible:show,lastValueVisible:show,priceLineVisible:show}});
+    if (item.label==='AI예측') predSeries.applyOptions({{visible:show,lastValueVisible:show,priceLineVisible:false}});
     else if (item.label==='예측상단') upperSeries.applyOptions({{visible:show,lastValueVisible:show,priceLineVisible:false}});
     else if (item.label==='예측하단') lowerSeries.applyOptions({{visible:show,lastValueVisible:show,priceLineVisible:false}});
-    else if (seriesMap[item.label]) seriesMap[item.label].applyOptions({{visible:show,lastValueVisible:show,priceLineVisible:show}});
+    else if (seriesMap[item.label]) seriesMap[item.label].applyOptions({{visible:show,lastValueVisible:show,priceLineVisible:false}});
   }};
   legend.appendChild(el);
 }});
