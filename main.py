@@ -538,6 +538,28 @@ if ticker:
         df.loc[df["High"] <= 0, "High"] = df["Close"]
         df.loc[df["Low"]  <= 0, "Low"]  = df["Close"]
 
+        # 장중 당일 데이터 보완 (pykrx 스냅샷)
+        try:
+            from pykrx import stock as _krx
+            _today_str = now_kst().strftime("%Y%m%d")
+            _today_ohlcv = _krx.get_market_ohlcv_by_date(_today_str, _today_str, stock_code)
+            if _today_ohlcv is not None and len(_today_ohlcv) > 0:
+                _tr = _today_ohlcv.iloc[-1]
+                _today_date = pd.Timestamp(_today_ohlcv.index[-1])
+                if _today_date.tz is not None:
+                    _today_date = _today_date.tz_localize(None)
+                _last_date = pd.to_datetime(df["Date"]).dt.tz_localize(None).max()
+                if _today_date > _last_date and float(_tr["종가"]) > 0:
+                    _new = pd.DataFrame([{
+                        "Date": _today_date,
+                        "Open": float(_tr["시가"]), "High": float(_tr["고가"]),
+                        "Low": float(_tr["저가"]), "Close": float(_tr["종가"]),
+                        "Volume": float(_tr["거래량"]),
+                    }])
+                    df = pd.concat([df, _new], ignore_index=True)
+        except Exception:
+            pass
+
         df["Date"] = pd.to_datetime(df["Date"]).dt.tz_localize(None)
         df["time"] = df["Date"].dt.strftime("%Y-%m-%d")
         df["MA3"]   = df["Close"].rolling(3).mean()
@@ -1129,7 +1151,10 @@ if (D.zoom_from) {{
                 import re as _re
                 parts   = _res_json["candidates"][0]["content"].get("parts", [])
                 ai_text = "".join(p.get("text", "") for p in parts if "text" in p).strip()
-                ai_html = _re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', ai_text)
+                # Gemini Google Search grounding이 삽입하는 JSON 블록 제거
+                ai_html = _re.sub(r'```json\s*\[.*?\]\s*```', '', ai_text, flags=_re.DOTALL)
+                ai_html = _re.sub(r'\[\s*\{\s*"query".*?\}\s*\]', '', ai_html, flags=_re.DOTALL)
+                ai_html = _re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', ai_html)
                 ai_html = _re.sub(r'<(tool_code|function_call|tool_result|code_execution)[^>]*>.*?</\1>', '', ai_html, flags=_re.DOTALL)
                 ai_html = ai_html.replace("\n", "<br>")                
                 src_label = "🔍 Google 검색 포함" if _used_search else ("📰 네이버 뉴스 기반" if news_txt else "📊 Prophet 데이터만")
