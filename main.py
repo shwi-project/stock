@@ -329,6 +329,32 @@ def fetch_realtime_price(stock_code: str) -> dict | None:
     return None
 
 
+def fetch_nxt_price(stock_code: str) -> dict | None:
+    """네이버 모바일 증권 API에서 NXT(대체거래소) 가격 조회."""
+    try:
+        url = f"https://m.stock.naver.com/api/stock/{stock_code}/basic"
+        resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=5)
+        if resp.status_code == 200:
+            data = resp.json()
+            nxt = data.get("overMarketPriceInfo")
+            if nxt and nxt.get("overPrice"):
+                price_str = nxt["overPrice"].replace(",", "")
+                change_str = nxt.get("compareToPreviousClosePrice", "0").replace(",", "")
+                direction = nxt.get("compareToPreviousPrice", {})
+                is_rising = direction.get("name") in ("RISING", "UPPER_LIMIT")
+                return {
+                    "price": int(price_str),
+                    "change": int(change_str) if is_rising else -int(change_str),
+                    "change_pct": float(nxt.get("fluctuationsRatio", 0)) if is_rising else -float(nxt.get("fluctuationsRatio", 0)),
+                    "status": nxt.get("overMarketStatus", ""),
+                    "session": nxt.get("tradingSessionType", ""),
+                    "time": nxt.get("localTradedAt", ""),
+                }
+    except Exception:
+        pass
+    return None
+
+
 # ─────────────────────────────────────────────
 # 헬퍼 함수
 # ─────────────────────────────────────────────
@@ -887,21 +913,21 @@ if ticker:
             )
 
         # ─────────────────────────────────────────────
-        # 실시간 현재가 배너 (장중에만)
+        # 실시간 현재가 + NXT 배너
         # ─────────────────────────────────────────────
         if _is_market_open:
-            _rt = fetch_realtime_price(stock_code)
+            # 정규장 실시간 (09:00~15:30)
+            _rt = fetch_realtime_price(stock_code) if (900 <= _hm <= 1530) else None
             if _rt and _rt["price"] > 0:
                 _rt_color = "#fc5c5c" if _rt["change"] >= 0 else "#4d9fff"
                 _rt_arrow = "▲" if _rt["change"] >= 0 else "▼"
                 _rt_time = _rt["time"][-8:] if len(_rt["time"]) > 8 else _rt["time"]
-                _live_label = "NXT" if (_hm < 900 or _hm > 1530) else "LIVE"
                 st.markdown(
                     f'<div style="background:linear-gradient(90deg,#131929 0%,#0f1a2e 100%);'
                     f'border:1px solid #1e3a5f;border-radius:6px;padding:8px 14px;'
                     f'margin-bottom:0.5rem;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">'
                     f'<div style="display:flex;align-items:center;gap:12px">'
-                    f'<span style="font-size:0.6rem;color:{"#f9a825" if _live_label=="NXT" else "#4dc98f"};font-weight:600;letter-spacing:1px">{_live_label}</span>'
+                    f'<span style="font-size:0.6rem;color:#4dc98f;font-weight:600;letter-spacing:1px">LIVE</span>'
                     f'<span style="font-family:JetBrains Mono,monospace;font-size:1.15rem;font-weight:700;color:#e2e8f0">'
                     f'{_rt["price"]:,}<span style="font-size:0.75rem;color:#4a5568">원</span></span>'
                     f'<span style="font-size:0.85rem;color:{_rt_color}">'
@@ -914,6 +940,53 @@ if ticker:
                     f'<span>거래량 {_rt["volume"]:,}</span>'
                     f'<span>{_rt_time}</span>'
                     f'</div></div>',
+                    unsafe_allow_html=True
+                )
+
+            # NXT 가격 (프리마켓 / 애프터마켓)
+            _nxt = fetch_nxt_price(stock_code)
+            if _nxt and _nxt["price"] > 0:
+                _nxt_color = "#fc5c5c" if _nxt["change"] >= 0 else "#4d9fff"
+                _nxt_arrow = "▲" if _nxt["change"] >= 0 else "▼"
+                _nxt_session = "프리마켓" if _nxt["session"] == "PRE_MARKET" else "애프터마켓"
+                _nxt_status_dot = "🟢" if _nxt["status"] == "OPEN" else "⚫"
+                _nxt_time = _nxt["time"][-14:-6] if len(_nxt["time"]) > 14 else _nxt["time"]
+                st.markdown(
+                    f'<div style="background:linear-gradient(90deg,#1a1a0e 0%,#1a1508 100%);'
+                    f'border:1px solid #3d3a1e;border-radius:6px;padding:6px 14px;'
+                    f'margin-bottom:0.5rem;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">'
+                    f'<div style="display:flex;align-items:center;gap:12px">'
+                    f'<span style="font-size:0.6rem;color:#f9a825;font-weight:600;letter-spacing:1px">{_nxt_status_dot} NXT {_nxt_session}</span>'
+                    f'<span style="font-family:JetBrains Mono,monospace;font-size:1.05rem;font-weight:700;color:#e2e8f0">'
+                    f'{_nxt["price"]:,}<span style="font-size:0.75rem;color:#4a5568">원</span></span>'
+                    f'<span style="font-size:0.8rem;color:{_nxt_color}">'
+                    f'{_nxt_arrow} {abs(_nxt["change"]):,}원 ({_nxt["change_pct"]:+.2f}%)</span>'
+                    f'</div>'
+                    f'<div style="font-size:0.68rem;color:#4a5568">{_nxt_time}</div>'
+                    f'</div>',
+                    unsafe_allow_html=True
+                )
+        else:
+            # 장 마감 후에도 NXT 종가 표시
+            _nxt = fetch_nxt_price(stock_code)
+            if _nxt and _nxt["price"] > 0:
+                _nxt_color = "#fc5c5c" if _nxt["change"] >= 0 else "#4d9fff"
+                _nxt_arrow = "▲" if _nxt["change"] >= 0 else "▼"
+                _nxt_session = "프리마켓" if _nxt["session"] == "PRE_MARKET" else "애프터마켓"
+                _nxt_time = _nxt["time"][-14:-6] if len(_nxt["time"]) > 14 else _nxt["time"]
+                st.markdown(
+                    f'<div style="background:linear-gradient(90deg,#1a1a0e 0%,#1a1508 100%);'
+                    f'border:1px solid #3d3a1e;border-radius:6px;padding:6px 14px;'
+                    f'margin-bottom:0.5rem;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">'
+                    f'<div style="display:flex;align-items:center;gap:12px">'
+                    f'<span style="font-size:0.6rem;color:#f9a825;font-weight:600;letter-spacing:1px">NXT {_nxt_session} (마감)</span>'
+                    f'<span style="font-family:JetBrains Mono,monospace;font-size:1.05rem;font-weight:700;color:#e2e8f0">'
+                    f'{_nxt["price"]:,}<span style="font-size:0.75rem;color:#4a5568">원</span></span>'
+                    f'<span style="font-size:0.8rem;color:{_nxt_color}">'
+                    f'{_nxt_arrow} {abs(_nxt["change"]):,}원 ({_nxt["change_pct"]:+.2f}%)</span>'
+                    f'</div>'
+                    f'<div style="font-size:0.68rem;color:#4a5568">{_nxt_time}</div>'
+                    f'</div>',
                     unsafe_allow_html=True
                 )
 
