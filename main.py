@@ -396,10 +396,14 @@ with _col3:
     _hm = _now.hour * 100 + _now.minute
     if _wd >= 5:
         _mkt_status = "🔴 휴장 (주말)"
-    elif _hm < 900:
+    elif _hm < 800:
         _mkt_status = "🟡 장 시작 전"
+    elif _hm < 900:
+        _mkt_status = "🟢 NXT 프리마켓"
     elif _hm <= 1530:
-        _mkt_status = "🟢 장중"
+        _mkt_status = "🟢 정규장"
+    elif _hm <= 2000:
+        _mkt_status = "🟢 NXT 애프터마켓"
     else:
         _mkt_status = "🔴 장 마감"
     st.markdown(
@@ -412,7 +416,7 @@ with _col3:
 pred_days = 1
 
 # 장중 자동 갱신 (60초 간격, 장중에만)
-_is_market_open = (_wd < 5 and 900 <= _hm <= 1530)
+_is_market_open = (_wd < 5 and 800 <= _hm <= 2000)
 if _is_market_open:
     st_autorefresh(interval=60_000, limit=None, key="market_refresh")
 
@@ -891,12 +895,13 @@ if ticker:
                 _rt_color = "#fc5c5c" if _rt["change"] >= 0 else "#4d9fff"
                 _rt_arrow = "▲" if _rt["change"] >= 0 else "▼"
                 _rt_time = _rt["time"][-8:] if len(_rt["time"]) > 8 else _rt["time"]
+                _live_label = "NXT" if (_hm < 900 or _hm > 1530) else "LIVE"
                 st.markdown(
                     f'<div style="background:linear-gradient(90deg,#131929 0%,#0f1a2e 100%);'
                     f'border:1px solid #1e3a5f;border-radius:6px;padding:8px 14px;'
                     f'margin-bottom:0.5rem;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">'
                     f'<div style="display:flex;align-items:center;gap:12px">'
-                    f'<span style="font-size:0.6rem;color:#4dc98f;font-weight:600;letter-spacing:1px">LIVE</span>'
+                    f'<span style="font-size:0.6rem;color:{"#f9a825" if _live_label=="NXT" else "#4dc98f"};font-weight:600;letter-spacing:1px">{_live_label}</span>'
                     f'<span style="font-family:JetBrains Mono,monospace;font-size:1.15rem;font-weight:700;color:#e2e8f0">'
                     f'{_rt["price"]:,}<span style="font-size:0.75rem;color:#4a5568">원</span></span>'
                     f'<span style="font-size:0.85rem;color:{_rt_color}">'
