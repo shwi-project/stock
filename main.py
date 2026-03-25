@@ -904,7 +904,7 @@ if ticker:
                 <div class="metric-sub" style="color:#4a5568">신뢰 구간 (하한~상한)</div>
             </div>
             <div class="metric-card">
-                <div class="metric-label">모델 정확도</div>
+                <div class="metric-label">예측 오차율</div>
                 <div class="metric-value" style="font-size:0.95rem;color:{'#4dc98f' if backtest_mape is not None and backtest_mape < 3 else '#f9a825' if backtest_mape is not None and backtest_mape < 5 else '#fc5c5c' if backtest_mape is not None else '#4a5568'}">{f'{backtest_mape:.1f}%' if backtest_mape is not None else '-'}</div>
                 <div class="metric-sub" style="color:#4a5568">{'MAPE 10일 백테스트' if backtest_mape is not None else '데이터 부족'}</div>
             </div>
@@ -1305,7 +1305,11 @@ if (D.zoom_from) {{
                 ai_text = "".join(p.get("text", "") for p in parts if "text" in p).strip()
                 # Gemini이 삽입하는 불필요한 텍스트 제거
                 ai_html = _re.sub(r'```json\s*\[.*?\]\s*```', '', ai_text, flags=_re.DOTALL)
+                ai_html = _re.sub(r'```python\s*.*?```', '', ai_html, flags=_re.DOTALL)
+                ai_html = _re.sub(r'```.*?```', '', ai_html, flags=_re.DOTALL)
                 ai_html = _re.sub(r'\[\s*\{\s*"query".*?\}\s*\]', '', ai_html, flags=_re.DOTALL)
+                ai_html = _re.sub(r'print\s*\(.*?\)\s*', '', ai_html, flags=_re.DOTALL)
+                ai_html = _re.sub(r'google_search\.\w+\(.*?\)', '', ai_html, flags=_re.DOTALL)
                 ai_html = _re.sub(r'(?i)disclaimer.*?(?=\n\n|🌍)', '', ai_html, flags=_re.DOTALL)
                 ai_html = _re.sub(r'(?i)I am an AI.*?(?=\n\n|🌍)', '', ai_html, flags=_re.DOTALL)
                 ai_html = _re.sub(r'(?i)(?:Note|Warning|Caution)\s*:?\s*(?:I am|This is|The following).*?(?=\n\n|🌍)', '', ai_html, flags=_re.DOTALL)
@@ -1313,14 +1317,23 @@ if (D.zoom_from) {{
                 _globe_idx = ai_html.find('🌍')
                 if _globe_idx > 0:
                     ai_html = ai_html[_globe_idx:]
+                # 🌍가 없으면 Gemini가 제대로 응답하지 않은 것 → 폴백
+                if '🌍' not in ai_html:
+                    ai_html = ""
                 ai_html = _re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', ai_html)
                 ai_html = _re.sub(r'<(tool_code|function_call|tool_result|code_execution)[^>]*>.*?</\1>', '', ai_html, flags=_re.DOTALL)
                 ai_html = ai_html.replace("\n", "<br>")                
-                src_label = "🔍 Google 검색 포함" if _used_search else ("📰 네이버 뉴스 기반" if news_txt else "📊 Prophet 데이터만")
-                source_tag = f'<div style="font-size:0.68rem;color:#4a5568;margin-top:8px">🤖 {_used_model} · {src_label}</div>'
-                st.session_state["cached_ai_html"] = ai_html
-                st.session_state["cached_ai_src"]  = source_tag
-                st.markdown(f'<div class="ai-box">{ai_html}{source_tag}</div>', unsafe_allow_html=True)
+                if ai_html.strip():
+                    src_label = "🔍 Google 검색 포함" if _used_search else ("📰 네이버 뉴스 기반" if news_txt else "📊 Prophet 데이터만")
+                    source_tag = f'<div style="font-size:0.68rem;color:#4a5568;margin-top:8px">🤖 {_used_model} · {src_label}</div>'
+                    st.session_state["cached_ai_html"] = ai_html
+                    st.session_state["cached_ai_src"]  = source_tag
+                    st.markdown(f'<div class="ai-box">{ai_html}{source_tag}</div>', unsafe_allow_html=True)
+                else:
+                    # Gemini가 코드만 출력하고 분석을 안 한 경우 → 폴백
+                    st.session_state["cached_ai_html"] = None
+                    st.session_state["cached_ai_src"]  = None
+                    _show_fallback_briefing(display_name, cp, pred_days, pred_end, pred_pct, pred_lower, pred_upper)
             else:
                 # 에러 시 캐시에 저장 → 재호출 방지
                 err_msg = _ai_error or "알 수 없는 오류"
