@@ -318,24 +318,74 @@ SCANNER_UNIVERSE = [
 @st.cache_data(ttl=600, show_spinner=False)
 def run_scanner(date_str: str) -> pd.DataFrame:
     """주요 종목들의 기술지표를 분석하고 매수 시그널 점수를 매긴다."""
-    from pykrx import stock as krx_stock
+    try:
+        import FinanceDataReader as fdr
+    except ImportError:
+        fdr = None
+    try:
+        from pykrx import stock as krx_stock
+    except ImportError:
+        krx_stock = None
+
+    if not fdr and not krx_stock:
+        return pd.DataFrame()
+
+    # 종목명 캐시 (pykrx)
+    _name_cache = {}
+    if krx_stock:
+        try:
+            for code in SCANNER_UNIVERSE:
+                n = krx_stock.get_market_ticker_name(code)
+                if n:
+                    _name_cache[code] = n
+        except Exception:
+            pass
+
     results = []
-    end_d = date_str
-    start_d = (datetime.strptime(date_str, "%Y%m%d") - timedelta(days=180)).strftime("%Y%m%d")
+    start_str = (datetime.strptime(date_str, "%Y%m%d") - timedelta(days=180)).strftime("%Y-%m-%d")
 
     for code in SCANNER_UNIVERSE:
         try:
-            df = krx_stock.get_market_ohlcv_by_date(start_d, end_d, code)
-            if df is None or len(df) < 60:
-                continue
-            df = df.reset_index()
-            df.columns = ["Date"] + list(df.columns[1:])
-            close = df["종가"].astype(float)
-            volume = df["거래량"].astype(float)
-            high = df["고가"].astype(float)
-            low = df["저가"].astype(float)
+            # FDR 1차, pykrx 폴백
+            ohlcv = None
+            if fdr:
+                try:
+                    tmp = fdr.DataReader(code, start_str)
+                    if tmp is not None and len(tmp) > 60:
+                        tmp = tmp.reset_index()
+                        ohlcv = tmp[["Date","Open","High","Low","Close","Volume"]].copy()
+                        ohlcv["Close"] = ohlcv["Close"].astype(float)
+                        ohlcv["Volume"] = ohlcv["Volume"].astype(float)
+                        ohlcv["High"] = ohlcv["High"].astype(float)
+                        ohlcv["Low"] = ohlcv["Low"].astype(float)
+                except Exception:
+                    pass
 
-            if close.iloc[-1] <= 0:
+            if ohlcv is None and krx_stock:
+                try:
+                    end_d = date_str
+                    start_d = (datetime.strptime(date_str, "%Y%m%d") - timedelta(days=180)).strftime("%Y%m%d")
+                    tmp = krx_stock.get_market_ohlcv_by_date(start_d, end_d, code)
+                    if tmp is not None and len(tmp) > 60:
+                        tmp = tmp.reset_index()
+                        ohlcv = pd.DataFrame({
+                            "Date": tmp.iloc[:, 0],
+                            "Open": tmp["시가"].astype(float),
+                            "High": tmp["고가"].astype(float),
+                            "Low": tmp["저가"].astype(float),
+                            "Close": tmp["종가"].astype(float),
+                            "Volume": tmp["거래량"].astype(float),
+                        })
+                except Exception:
+                    pass
+
+            if ohlcv is None or len(ohlcv) < 60:
+                continue
+
+            close = ohlcv["Close"]
+            volume = ohlcv["Volume"]
+
+            if float(close.iloc[-1]) <= 0:
                 continue
 
             # RSI 14
@@ -391,7 +441,7 @@ def run_scanner(date_str: str) -> pd.DataFrame:
                 score += 15
                 signals.append("MACD▲")
 
-            # MA20 위 위치 (15점)
+            # MA20 위 위치 (10점)
             if len(ma20.dropna()) > 0 and float(close.iloc[-1]) > float(ma20.iloc[-1]):
                 score += 10
                 signals.append("MA20↑")
@@ -400,12 +450,13 @@ def run_scanner(date_str: str) -> pd.DataFrame:
             if score < 10:
                 continue
 
-            name = krx_stock.get_market_ticker_name(code)
+            name = _name_cache.get(code, code)
+            prev_close = float(close.iloc[-2]) if len(close) >= 2 else float(close.iloc[-1])
             results.append({
                 "code": code,
-                "name": name or code,
+                "name": name,
                 "price": int(close.iloc[-1]),
-                "change_pct": round((float(close.iloc[-1]) - float(close.iloc[-2])) / float(close.iloc[-2]) * 100, 2),
+                "change_pct": round((float(close.iloc[-1]) - prev_close) / max(prev_close, 1) * 100, 2),
                 "rsi": round(cur_rsi, 1),
                 "vol_ratio": round(vol_ratio, 1),
                 "macd_hist": round(macd_hist, 2),
@@ -792,12 +843,11 @@ def fetch_nxt_price(stock_code: str) -> dict | None:
             if nxt and nxt.get("overPrice"):
                 price_str = nxt["overPrice"].replace(",", "")
                 change_str = nxt.get("compareToPreviousClosePrice", "0").replace(",", "")
-                direction = nxt.get("compareToPreviousPrice", {})
-                is_rising = direction.get("name") in ("RISING", "UPPER_LIMIT")
+                # API가 이미 부호를 포함하여 반환 (예: "-2,100", "-1.11")
                 return {
                     "price": int(price_str),
-                    "change": int(change_str) if is_rising else -int(change_str),
-                    "change_pct": float(nxt.get("fluctuationsRatio", 0)) if is_rising else -float(nxt.get("fluctuationsRatio", 0)),
+                    "change": int(change_str),
+                    "change_pct": float(nxt.get("fluctuationsRatio", 0)),
                     "status": nxt.get("overMarketStatus", ""),
                     "session": nxt.get("tradingSessionType", ""),
                     "time": nxt.get("localTradedAt", ""),
@@ -911,8 +961,16 @@ if selected_label is None:
         unsafe_allow_html=True
     )
 
-    with st.spinner("📡 주요 종목 기술지표 스캔 중... (최초 1회, 이후 캐시)"):
-        _scanner_df = run_scanner(_scanner_date)
+    try:
+        with st.spinner("📡 주요 종목 기술지표 스캔 중... (최초 1회, 이후 캐시)"):
+            _scanner_df = run_scanner(_scanner_date)
+    except Exception as _scan_err:
+        _scanner_df = pd.DataFrame()
+        st.markdown(
+            f'<div class="scanner-card" style="color:#fc5c5c;padding:1rem;font-size:0.8rem">'
+            f'⚠️ 스캔 중 오류: {_scan_err}</div>',
+            unsafe_allow_html=True
+        )
 
     if _scanner_df.empty:
         st.markdown(
