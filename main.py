@@ -922,16 +922,6 @@ if ticker:
         </div>
         """, unsafe_allow_html=True)
 
-        # 신뢰도 경고 (클램프 적용 후 값 기준)
-        _ci_spread_pct = abs(pred_upper - pred_lower) / max(cp, 1) * 100
-        if _ci_spread_pct > 20:
-            st.markdown(
-                '<div style="background:#2a1a1a;border:1px solid #5c2020;border-radius:6px;'
-                'padding:6px 12px;font-size:0.75rem;color:#fc5c5c;margin-bottom:0.4rem">'
-                '⚠️ 변동성이 큰 종목입니다. 예측 참고용으로만 활용하세요.</div>',
-                unsafe_allow_html=True
-            )
-
         # ─────────────────────────────────────────────
         # 실시간 현재가 + NXT 배너
         # ─────────────────────────────────────────────
