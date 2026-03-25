@@ -1215,9 +1215,16 @@ if (D.zoom_from) {{
                 import re as _re
                 parts   = _res_json["candidates"][0]["content"].get("parts", [])
                 ai_text = "".join(p.get("text", "") for p in parts if "text" in p).strip()
-                # Gemini Google Search grounding이 삽입하는 JSON 블록 제거
+                # Gemini이 삽입하는 불필요한 텍스트 제거
                 ai_html = _re.sub(r'```json\s*\[.*?\]\s*```', '', ai_text, flags=_re.DOTALL)
                 ai_html = _re.sub(r'\[\s*\{\s*"query".*?\}\s*\]', '', ai_html, flags=_re.DOTALL)
+                ai_html = _re.sub(r'(?i)disclaimer.*?(?=\n\n|🌍)', '', ai_html, flags=_re.DOTALL)
+                ai_html = _re.sub(r'(?i)I am an AI.*?(?=\n\n|🌍)', '', ai_html, flags=_re.DOTALL)
+                ai_html = _re.sub(r'(?i)(?:Note|Warning|Caution)\s*:?\s*(?:I am|This is|The following).*?(?=\n\n|🌍)', '', ai_html, flags=_re.DOTALL)
+                # 🌍 이전의 모든 텍스트 제거 (프롬프트에서 🌍로 시작하도록 지시함)
+                _globe_idx = ai_html.find('🌍')
+                if _globe_idx > 0:
+                    ai_html = ai_html[_globe_idx:]
                 ai_html = _re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', ai_html)
                 ai_html = _re.sub(r'<(tool_code|function_call|tool_result|code_execution)[^>]*>.*?</\1>', '', ai_html, flags=_re.DOTALL)
                 ai_html = ai_html.replace("\n", "<br>")                
