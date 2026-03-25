@@ -138,6 +138,41 @@ st.markdown("""
     .badge-kospi  { background: #1a2a4a; color: #4d9fff; }
     .badge-kosdaq { background: #1a3a2a; color: #4dc98f; }
 
+    .scanner-wrap { margin-top: 0.5rem; }
+    .scanner-card {
+        background: linear-gradient(135deg, #131929 0%, #0f1a2e 100%);
+        border: 1px solid #1e2d45; border-radius: 10px;
+        padding: 0.75rem 1rem; margin-bottom: 0.5rem;
+        transition: border-color 0.2s;
+    }
+    .scanner-card:hover { border-color: #3b82f6; }
+    .scanner-rank {
+        display: inline-flex; align-items: center; justify-content: center;
+        width: 24px; height: 24px; border-radius: 50%;
+        font-size: 0.72rem; font-weight: 700; margin-right: 10px;
+    }
+    .rank-1 { background: linear-gradient(135deg, #f9a825, #ff6f00); color: #000; }
+    .rank-2 { background: linear-gradient(135deg, #b0bec5, #78909c); color: #000; }
+    .rank-3 { background: linear-gradient(135deg, #8d6e63, #6d4c41); color: #fff; }
+    .rank-other { background: #2d3a55; color: #a0aec0; }
+    .scanner-score {
+        display: inline-block; padding: 2px 8px; border-radius: 4px;
+        font-size: 0.68rem; font-weight: 700; font-family: 'JetBrains Mono', monospace;
+    }
+    .score-high { background: #1a3a2a; color: #4dc98f; }
+    .score-mid  { background: #3a3a1a; color: #f9a825; }
+    .score-low  { background: #3a1a1a; color: #fc5c5c; }
+    .signal-tag {
+        display: inline-block; padding: 1px 6px; border-radius: 3px;
+        font-size: 0.58rem; font-weight: 600; margin-right: 4px; margin-top: 2px;
+        background: #1e2d45; color: #4d9fff;
+    }
+    .scanner-ai {
+        background: #0d1117; border-radius: 6px; padding: 8px 12px;
+        margin-top: 6px; font-size: 0.78rem; color: #c8d6e8; line-height: 1.65;
+        border-left: 2px solid #3b82f6;
+    }
+
     iframe {
         border: none !important; outline: none !important;
         display: block !important; background: #0b0e17 !important;
@@ -258,6 +293,423 @@ def load_all_stocks() -> pd.DataFrame:
         ("카카오뱅크","323410","KOSDAQ"),("실리콘투","257720","KOSDAQ"),
     ]
     return _make_df([[n,c,m] for n,c,m in data])
+
+
+# ─────────────────────────────────────────────
+# 모닝 스캐너 유니버스 (주요 종목 ~80개)
+# ─────────────────────────────────────────────
+SCANNER_UNIVERSE = [
+    "005930","000660","373220","207940","005380","068270","105560","000270",
+    "055550","005490","035420","051910","006400","012330","035720","086790",
+    "096770","066570","012450","064350","009540","042660","352820","041510",
+    "086520","247540","028300","196170","058470","259960","323410","257720",
+    "003670","034730","010130","032830","003490","009830","018260","011200",
+    "024110","036570","010950","033780","047050","015760","017670","003550",
+    "034020","090430","000100","078930","326030","316140","377300","112040",
+    "272210","003230","006800","138930","180640","011170","097950","021240",
+    "028260","251270","293490","000720","036460","005940","402340","005830",
+    "004020","011780","066970","300720","161390","145020","263750","052690",
+]
+
+
+# ─────────────────────────────────────────────
+# 모닝 스캐너: 기술지표 스코어링
+# ─────────────────────────────────────────────
+@st.cache_data(ttl=600, show_spinner=False)
+def run_scanner(date_str: str) -> pd.DataFrame:
+    """주요 종목들의 기술지표를 분석하고 매수 시그널 점수를 매긴다."""
+    from pykrx import stock as krx_stock
+    results = []
+    end_d = date_str
+    start_d = (datetime.strptime(date_str, "%Y%m%d") - timedelta(days=180)).strftime("%Y%m%d")
+
+    for code in SCANNER_UNIVERSE:
+        try:
+            df = krx_stock.get_market_ohlcv_by_date(start_d, end_d, code)
+            if df is None or len(df) < 60:
+                continue
+            df = df.reset_index()
+            df.columns = ["Date"] + list(df.columns[1:])
+            close = df["종가"].astype(float)
+            volume = df["거래량"].astype(float)
+            high = df["고가"].astype(float)
+            low = df["저가"].astype(float)
+
+            if close.iloc[-1] <= 0:
+                continue
+
+            # RSI 14
+            delta = close.diff()
+            gain = delta.clip(lower=0).rolling(14).mean()
+            loss = (-delta.clip(upper=0)).rolling(14).mean()
+            rs = gain / loss.replace(0, 1e-9)
+            rsi = (100 - 100 / (1 + rs)).fillna(50)
+            cur_rsi = float(rsi.iloc[-1])
+            min_rsi_3d = float(rsi.iloc[-3:].min()) if len(rsi) >= 3 else cur_rsi
+
+            # MA 골든크로스 (5MA > 20MA, 3일 이내 교차)
+            ma5 = close.rolling(5).mean()
+            ma20 = close.rolling(20).mean()
+            golden_cross = False
+            if len(ma5.dropna()) >= 3 and len(ma20.dropna()) >= 3:
+                recent = ma5.iloc[-3:] - ma20.iloc[-3:]
+                if float(recent.iloc[-1]) > 0 and float(recent.iloc[0]) <= 0:
+                    golden_cross = True
+
+            # 거래량 돌파
+            vol_avg20 = float(volume.rolling(20).mean().iloc[-1]) if len(volume) >= 20 else 1
+            vol_ratio = float(volume.iloc[-1]) / max(vol_avg20, 1)
+
+            # MACD
+            ema12 = close.ewm(span=12, adjust=False).mean()
+            ema26 = close.ewm(span=26, adjust=False).mean()
+            macd_hist = float((ema12 - ema26).iloc[-1] - (ema12 - ema26).ewm(span=9, adjust=False).mean().iloc[-1])
+
+            # 점수 계산
+            score = 0.0
+            signals = []
+
+            # RSI 과매도 반등 (25점)
+            if min_rsi_3d < 35 and cur_rsi > min_rsi_3d:
+                rsi_score = min((35 - min_rsi_3d) / 20, 1.0) * 25
+                score += rsi_score
+                signals.append("RSI반등")
+
+            # 골든크로스 (20점)
+            if golden_cross:
+                score += 20
+                signals.append("골든크로스")
+
+            # 거래량 돌파 (25점)
+            if vol_ratio > 1.5:
+                vol_score = min(vol_ratio / 4, 1.0) * 25
+                score += vol_score
+                signals.append(f"거래량{vol_ratio:.1f}x")
+
+            # MACD 상승전환 (15점)
+            if macd_hist > 0:
+                score += 15
+                signals.append("MACD▲")
+
+            # MA20 위 위치 (15점)
+            if len(ma20.dropna()) > 0 and float(close.iloc[-1]) > float(ma20.iloc[-1]):
+                score += 10
+                signals.append("MA20↑")
+
+            # 최소 시그널 1개 이상
+            if score < 10:
+                continue
+
+            name = krx_stock.get_market_ticker_name(code)
+            results.append({
+                "code": code,
+                "name": name or code,
+                "price": int(close.iloc[-1]),
+                "change_pct": round((float(close.iloc[-1]) - float(close.iloc[-2])) / float(close.iloc[-2]) * 100, 2),
+                "rsi": round(cur_rsi, 1),
+                "vol_ratio": round(vol_ratio, 1),
+                "macd_hist": round(macd_hist, 2),
+                "score": round(score, 1),
+                "signals": signals,
+            })
+        except Exception:
+            continue
+
+    if not results:
+        return pd.DataFrame()
+
+    df_result = pd.DataFrame(results).sort_values("score", ascending=False).head(5).reset_index(drop=True)
+    return df_result
+
+
+# ─────────────────────────────────────────────
+# 모닝 스캐너: Gemini 브리핑 (Top 5)
+# ─────────────────────────────────────────────
+def fetch_scanner_briefing(stock_list: list[dict], today_str: str) -> dict:
+    """Top 5 종목에 대한 짧은 Gemini AI 브리핑을 반환."""
+    if "GEMINI_API_KEY" not in st.secrets:
+        return {}
+
+    cache_key = f"scanner_ai_{today_str}"
+    if cache_key in st.session_state and st.session_state[cache_key]:
+        return st.session_state[cache_key]
+
+    gemini_key = str(st.secrets["GEMINI_API_KEY"]).strip()
+    base_url = "https://generativelanguage.googleapis.com/v1beta/models"
+    model = "gemini-2.5-flash-lite"
+    results = {}
+
+    for stock in stock_list:
+        try:
+            prompt = f"""당신은 한국 주식 전문 애널리스트입니다. 오늘은 {today_str}입니다.
+
+[종목 정보]
+- {stock['name']} ({stock['code']}) | 현재가: {stock['price']:,}원 ({stock['change_pct']:+.2f}%)
+- RSI: {stock['rsi']} | 거래량비율: {stock['vol_ratio']}x | MACD: {stock['macd_hist']:+.2f}
+- 감지된 시그널: {', '.join(stock['signals'])}
+
+[Google 검색 명령]
+"{stock['name']} 최신 뉴스 {today_str}"
+
+[출력 규칙]
+- 반드시 3줄 이내 개조식으로 작성
+- 1줄: 핵심 이슈 (최근 뉴스/공시 기반)
+- 2줄: 기술적 판단 (매수/관망/매도)
+- 3줄: 핵심 타점 (진입가, 손절가)
+- 코드블록, disclaimer 등 불필요한 텍스트 절대 금지"""
+
+            url = f"{base_url}/{model}:generateContent?key={gemini_key}"
+            res = requests.post(url, json={
+                "contents": [{"parts": [{"text": prompt}]}],
+                "tools": [{"googleSearch": {}}]
+            }, timeout=30)
+
+            if res.status_code == 200:
+                rj = res.json()
+                if "candidates" in rj:
+                    import re as _re
+                    parts = rj["candidates"][0]["content"].get("parts", [])
+                    text = "".join(p.get("text", "") for p in parts if "text" in p).strip()
+                    text = _re.sub(r'```.*?```', '', text, flags=_re.DOTALL)
+                    text = _re.sub(r'print\s*\(.*?\)\s*', '', text, flags=_re.DOTALL)
+                    text = _re.sub(r'google_search\.\w+\(.*?\)', '', text, flags=_re.DOTALL)
+                    text = _re.sub(r'(?i)disclaimer.*', '', text, flags=_re.DOTALL)
+                    text = _re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', text)
+                    text = text.strip()
+                    if text:
+                        results[stock['code']] = text.replace("\n", "<br>")
+            elif res.status_code == 429:
+                break  # 한도 초과 시 중단
+        except Exception:
+            continue
+
+    st.session_state[cache_key] = results
+    return results
+
+
+# ─────────────────────────────────────────────
+# 예측 계산 (날짜 기반 캐시 → 일관성 보장)
+# ─────────────────────────────────────────────
+KR_HOLIDAYS = {
+    datetime(2024,  1,  1), datetime(2024,  2,  9), datetime(2024,  2, 10),
+    datetime(2024,  2, 12), datetime(2024,  3,  1), datetime(2024,  4, 10),
+    datetime(2024,  5,  5), datetime(2024,  5,  6), datetime(2024,  5, 15),
+    datetime(2024,  6,  6), datetime(2024,  8, 15), datetime(2024,  9, 16),
+    datetime(2024,  9, 17), datetime(2024,  9, 18), datetime(2024, 10,  3),
+    datetime(2024, 10,  9), datetime(2024, 12, 25),
+    datetime(2025,  1,  1), datetime(2025,  1, 28), datetime(2025,  1, 29),
+    datetime(2025,  1, 30), datetime(2025,  3,  1), datetime(2025,  3,  3),
+    datetime(2025,  5,  5), datetime(2025,  5,  6), datetime(2025,  6,  6),
+    datetime(2025,  8, 15), datetime(2025, 10,  3), datetime(2025, 10,  5),
+    datetime(2025, 10,  6), datetime(2025, 10,  7), datetime(2025, 10,  9),
+    datetime(2025, 12, 25),
+    datetime(2026,  1,  1), datetime(2026,  2, 17), datetime(2026,  2, 18),
+    datetime(2026,  2, 19), datetime(2026,  3,  1), datetime(2026,  3,  2),
+    datetime(2026,  5,  5), datetime(2026,  5, 25), datetime(2026,  6,  6),
+    datetime(2026,  8, 17), datetime(2026,  9, 24), datetime(2026,  9, 25),
+    datetime(2026,  9, 28), datetime(2026, 10,  9), datetime(2026, 12, 25),
+}
+
+def get_kr_trading_days(start_date, count):
+    days = []
+    cur = start_date + timedelta(days=1)
+    while len(days) < count:
+        if cur.weekday() < 5 and cur not in KR_HOLIDAYS:
+            days.append(cur)
+        cur += timedelta(days=1)
+    return days
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def compute_prediction(stock_code: str, date_str: str, pred_days: int,
+                       _last_date_str: str, news_raw_json: str) -> dict:
+    """날짜+종목+마지막거래일 기반 캐시로 동일한 날 동일한 결과 보장."""
+    news_raw = json.loads(news_raw_json)
+
+    # 데이터를 내부에서 직접 가져옴 (캐시 키와 무관하게 일관된 데이터)
+    df = fetch_stock_ohlcv(stock_code, days=730)
+
+    np.random.seed(42)  # Prophet 재현성 보장
+
+    df["Date"] = pd.to_datetime(df["Date"]).dt.tz_localize(None)
+    df.loc[df["Open"] <= 0, "Open"] = df["Close"]
+    df.loc[df["High"] <= 0, "High"] = df["Close"]
+    df.loc[df["Low"]  <= 0, "Low"]  = df["Close"]
+
+    close = df["Close"]
+    delta = close.diff()
+    gain = delta.clip(lower=0).rolling(14).mean()
+    loss = (-delta.clip(upper=0)).rolling(14).mean()
+    rs = gain / loss.replace(0, 1e-9)
+    df["RSI"] = (100 - 100 / (1 + rs)).fillna(50)
+
+    ema12 = close.ewm(span=12, adjust=False).mean()
+    ema26 = close.ewm(span=26, adjust=False).mean()
+    macd_line = ema12 - ema26
+    macd_signal_line = macd_line.ewm(span=9, adjust=False).mean()
+    df["MACD_hist"] = (macd_line - macd_signal_line).fillna(0)
+
+    bb_mid = close.rolling(20).mean()
+    bb_std = close.rolling(20).std()
+    df["BB_pct"] = ((close - (bb_mid - 2*bb_std)) / (4*bb_std + 1e-9)).fillna(0.5).clip(0, 1)
+
+    obv = (df["Volume"] * df["Close"].diff().apply(
+        lambda x: 1 if x > 0 else (-1 if x < 0 else 0)
+    )).cumsum()
+    obv_range = obv.max() - obv.min()
+    df["OBV_norm"] = ((obv - obv.min()) / (obv_range + 1e-9)).fillna(0.5)
+
+    df["vol_ratio"] = (df["Volume"] / df["Volume"].rolling(20).mean().replace(0, 1)).fillna(1.0)
+    df["ma20_dist"] = ((close - close.rolling(20).mean()) / (close.rolling(20).mean() + 1e-9)).fillna(0)
+
+    POS_WORDS = {"상승","급등","신고가","호실적","흑자","수주","계약","승인","성장","돌파","매수","강세","반등","기대"}
+    NEG_WORDS = {"하락","급락","적자","부진","리스크","매도","약세","손실","취소","조사","소송","경고","우려","악화"}
+
+    sentiment_score = 0.0
+    if news_raw:
+        scores = []
+        for i, n in enumerate(news_raw):
+            title = n.get("title", "")
+            pos = sum(1 for w in POS_WORDS if w in title)
+            neg = sum(1 for w in NEG_WORDS if w in title)
+            raw_s = (pos - neg) / max(pos + neg, 1) if (pos + neg) > 0 else 0.0
+            recency_w = 1.0 / (1 + i * 0.2)
+            scores.append(raw_s * recency_w)
+        sentiment_score = sum(scores) / sum(1.0 / (1 + i * 0.2) for i in range(len(scores))) if scores else 0.0
+
+    df["sentiment"] = sentiment_score
+
+    REGRESSOR_COLS = ["RSI", "MACD_hist", "BB_pct", "OBV_norm", "sentiment"]
+    df_f = df[["Date", "Close"] + REGRESSOR_COLS].rename(
+        columns={"Date": "ds", "Close": "y"}
+    ).dropna()
+
+    # 적응형 Prophet 하이퍼파라미터
+    atr_14 = (df["High"] - df["Low"]).rolling(14).mean()
+    atr_60 = (df["High"] - df["Low"]).rolling(60).mean()
+    if len(atr_14.dropna()) > 0 and len(atr_60.dropna()) > 0:
+        vol_ratio_now = float(atr_14.iloc[-1]) / max(float(atr_60.iloc[-1]), 1e-9)
+        if vol_ratio_now > 2.0:
+            cps = 0.1
+        elif vol_ratio_now < 0.5:
+            cps = 0.02
+        else:
+            cps = 0.05
+    else:
+        cps = 0.05
+
+    np.random.seed(42)  # 재현성
+    model = Prophet(
+        daily_seasonality=False, weekly_seasonality=True,
+        yearly_seasonality=True, changepoint_prior_scale=cps,
+        n_changepoints=15,
+    )
+    for reg in REGRESSOR_COLS:
+        model.add_regressor(reg, standardize=True)
+    model.fit(df_f)
+
+    trading_days = get_kr_trading_days(df["Date"].max(), pred_days)
+    future_dates = pd.DataFrame({"ds": pd.to_datetime(trading_days)})
+
+    # 평균회귀 기반 지표 외삽
+    last_row = df_f.iloc[-1]
+    MEAN_TARGETS = {"RSI": 50.0, "BB_pct": 0.5, "MACD_hist": 0.0, "OBV_norm": 0.5, "sentiment": 0.0}
+    REVERT_SPEED = {"RSI": 0.15, "BB_pct": 0.2, "MACD_hist": 0.25, "OBV_norm": 0.1, "sentiment": 0.3}
+
+    for col in REGRESSOR_COLS:
+        vals, curr_val = [], float(last_row[col])
+        mu = MEAN_TARGETS[col]
+        theta = REVERT_SPEED[col]
+        for step in range(1, pred_days + 1):
+            curr_val = curr_val + theta * (mu - curr_val)
+            vals.append(curr_val)
+        future_dates[col] = vals
+
+    future_dates["RSI"] = future_dates["RSI"].clip(0, 100)
+    future_dates["BB_pct"] = future_dates["BB_pct"].clip(-0.2, 1.2)
+
+    future_all = pd.concat(
+        [df_f[["ds"] + REGRESSOR_COLS], future_dates],
+        ignore_index=True
+    )
+    fc = model.predict(future_all)
+
+    last_date_tmp = df["Date"].max()
+    fc_future_tmp = fc[fc["ds"] > last_date_tmp].copy()
+    prophet_pred = float(fc_future_tmp.iloc[-1]["yhat"])
+
+    # GradientBoosting 앙상블
+    GBR_FEATURES = ["RSI", "MACD_hist", "BB_pct", "OBV_norm", "vol_ratio", "ma20_dist"]
+    df_gb = df.dropna(subset=GBR_FEATURES + ["Close"]).copy()
+    df_gb["target"] = df_gb["Close"].shift(-1)
+    df_gb = df_gb.dropna(subset=["target"])
+
+    gbr_pred = prophet_pred
+    if len(df_gb) > 30:
+        try:
+            X_gb = df_gb[GBR_FEATURES].values
+            y_gb = df_gb["target"].values
+            gbr = GradientBoostingRegressor(
+                n_estimators=100, max_depth=4, learning_rate=0.1,
+                subsample=0.8, random_state=42
+            )
+            gbr.fit(X_gb, y_gb)
+            last_features = df[GBR_FEATURES].iloc[-1:].values
+            gbr_pred = float(gbr.predict(last_features)[0])
+        except Exception:
+            gbr_pred = prophet_pred
+
+    ensemble_pred = prophet_pred * 0.6 + gbr_pred * 0.4
+
+    # 클램프 (±15% soft, ±30% hard)
+    _current_close = float(df["Close"].iloc[-1])
+    _max_daily_pct = 0.15
+    _hard_limit_pct = 0.30
+
+    _pred_pct_raw = (ensemble_pred - _current_close) / _current_close
+    if abs(_pred_pct_raw) > _max_daily_pct:
+        ensemble_pred = _current_close * (1 + np.sign(_pred_pct_raw) * _max_daily_pct)
+    ensemble_pred = np.clip(ensemble_pred,
+                            _current_close * (1 - _hard_limit_pct),
+                            _current_close * (1 + _hard_limit_pct))
+
+    fc_future_tmp["yhat"] = ensemble_pred
+    spread = float(fc_future_tmp.iloc[-1]["yhat_upper"] - fc_future_tmp.iloc[-1]["yhat_lower"])
+    _max_spread = _current_close * _hard_limit_pct * 2
+    spread = min(spread, _max_spread)
+    fc_future_tmp["yhat_upper"] = min(ensemble_pred + spread * 0.5,
+                                      _current_close * (1 + _hard_limit_pct))
+    fc_future_tmp["yhat_lower"] = max(ensemble_pred - spread * 0.5,
+                                      _current_close * (1 - _hard_limit_pct))
+
+    # 백테스팅 (최근 10영업일 MAPE)
+    backtest_mape = None
+    if len(df_gb) > 40:
+        try:
+            X_bt = df_gb[GBR_FEATURES].values
+            y_bt = df_gb["target"].values
+            bt_actual = y_bt[-10:]
+            bt_pred_gbr = []
+            for i in range(10):
+                idx = len(X_bt) - 10 + i
+                gbr_bt = GradientBoostingRegressor(
+                    n_estimators=100, max_depth=4, learning_rate=0.1,
+                    subsample=0.8, random_state=42
+                )
+                gbr_bt.fit(X_bt[:idx], y_bt[:idx])
+                bt_pred_gbr.append(gbr_bt.predict(X_bt[idx:idx+1])[0])
+            bt_pred_arr = np.array(bt_pred_gbr)
+            bt_actual_arr = np.array(bt_actual)
+            backtest_mape = float(np.mean(np.abs((bt_actual_arr - bt_pred_arr) / bt_actual_arr)) * 100)
+        except Exception:
+            backtest_mape = None
+
+    return {
+        "fc_future": fc_future_tmp.to_dict("records"),
+        "sentiment_score": sentiment_score,
+        "backtest_mape": backtest_mape,
+        "df_with_indicators": df.to_dict("records"),
+    }
 
 
 # ─────────────────────────────────────────────
@@ -447,7 +899,79 @@ if _is_market_open:
     st_autorefresh(interval=60_000, limit=None, key="market_refresh")
 
 if selected_label is None:
-    st.markdown('<div style="height:2rem"></div>', unsafe_allow_html=True)
+    # ─────────────────────────────────────────────
+    # 모닝 스캐너 랜딩 페이지
+    # ─────────────────────────────────────────────
+    st.markdown("---")
+    _scanner_date = now_kst().strftime("%Y%m%d")
+    _scanner_today_str = now_kst().strftime("%Y년 %m월 %d일")
+
+    st.markdown(
+        f'<div class="section-header">🔎 모닝 스캐너 — {_scanner_today_str} 매수 시그널 Top 5</div>',
+        unsafe_allow_html=True
+    )
+
+    with st.spinner("📡 주요 종목 기술지표 스캔 중... (최초 1회, 이후 캐시)"):
+        _scanner_df = run_scanner(_scanner_date)
+
+    if _scanner_df.empty:
+        st.markdown(
+            '<div class="scanner-card" style="text-align:center;color:#4a5568;padding:2rem">'
+            '오늘은 뚜렷한 매수 시그널이 감지되지 않았습니다.</div>',
+            unsafe_allow_html=True
+        )
+    else:
+        # Gemini 브리핑 호출 (Top 5, 하루 1회 캐시)
+        _scanner_list = _scanner_df.to_dict("records")
+        with st.spinner("🤖 AI가 Top 5 종목을 분석 중..."):
+            _scanner_ai = fetch_scanner_briefing(_scanner_list, _scanner_date)
+
+        for _idx, _row in _scanner_df.iterrows():
+            _rank = _idx + 1
+            _rank_cls = f"rank-{_rank}" if _rank <= 3 else "rank-other"
+            _score = _row["score"]
+            _score_cls = "score-high" if _score >= 50 else ("score-mid" if _score >= 30 else "score-low")
+            _chg_color = "#fc5c5c" if _row["change_pct"] >= 0 else "#4d9fff"
+            _chg_arrow = "▲" if _row["change_pct"] >= 0 else "▼"
+
+            _signals_html = "".join(f'<span class="signal-tag">{s}</span>' for s in _row["signals"])
+
+            _ai_text = _scanner_ai.get(_row["code"], "")
+            _ai_section = f'<div class="scanner-ai">{_ai_text}</div>' if _ai_text else ""
+
+            st.markdown(f'''
+            <div class="scanner-card">
+                <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+                    <div style="display:flex;align-items:center">
+                        <span class="scanner-rank {_rank_cls}">{_rank}</span>
+                        <div>
+                            <span style="font-size:0.95rem;font-weight:600;color:#e2e8f0">{_row["name"]}</span>
+                            <span style="font-size:0.7rem;color:#4a5568;margin-left:6px">{_row["code"]}</span>
+                        </div>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:12px">
+                        <span style="font-family:JetBrains Mono,monospace;font-size:1rem;font-weight:600;color:#e2e8f0">
+                            {_row["price"]:,}<span style="font-size:0.72rem;color:#4a5568">원</span>
+                        </span>
+                        <span style="font-size:0.8rem;color:{_chg_color}">{_chg_arrow} {abs(_row["change_pct"]):.2f}%</span>
+                        <span class="scanner-score {_score_cls}">SCORE {_score}</span>
+                    </div>
+                </div>
+                <div style="margin-top:6px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                    {_signals_html}
+                    <span style="font-size:0.65rem;color:#4a5568;margin-left:auto">
+                        RSI {_row["rsi"]} · 거래량 {_row["vol_ratio"]}x · MACD {_row["macd_hist"]:+.2f}
+                    </span>
+                </div>
+                {_ai_section}
+            </div>
+            ''', unsafe_allow_html=True)
+
+    st.markdown(
+        '<div style="text-align:center;color:#4a5568;font-size:0.65rem;margin-top:1rem">'
+        '💡 종목을 검색하면 상세 분석 화면으로 전환됩니다 · 스캔 데이터는 10분 캐시</div>',
+        unsafe_allow_html=True
+    )
     st.stop()
 
 # 조회 버튼 클릭 시 캐시 초기화 (재조회 가능)
@@ -602,28 +1126,6 @@ if ticker:
         df.loc[df["High"] <= 0, "High"] = df["Close"]
         df.loc[df["Low"]  <= 0, "Low"]  = df["Close"]
 
-        # 장중 당일 데이터 보완 (pykrx 스냅샷)
-        try:
-            from pykrx import stock as _krx
-            _today_str = now_kst().strftime("%Y%m%d")
-            _today_ohlcv = _krx.get_market_ohlcv_by_date(_today_str, _today_str, stock_code)
-            if _today_ohlcv is not None and len(_today_ohlcv) > 0:
-                _tr = _today_ohlcv.iloc[-1]
-                _today_date = pd.Timestamp(_today_ohlcv.index[-1])
-                if _today_date.tz is not None:
-                    _today_date = _today_date.tz_localize(None)
-                _last_date = pd.to_datetime(df["Date"]).dt.tz_localize(None).max()
-                if _today_date > _last_date and float(_tr["종가"]) > 0:
-                    _new = pd.DataFrame([{
-                        "Date": _today_date,
-                        "Open": float(_tr["시가"]), "High": float(_tr["고가"]),
-                        "Low": float(_tr["저가"]), "Close": float(_tr["종가"]),
-                        "Volume": float(_tr["거래량"]),
-                    }])
-                    df = pd.concat([df, _new], ignore_index=True)
-        except Exception:
-            pass
-
         df["Date"] = pd.to_datetime(df["Date"]).dt.tz_localize(None)
         df["time"] = df["Date"].dt.strftime("%Y-%m-%d")
         df["MA3"]   = df["Close"].rolling(3).mean()
@@ -642,227 +1144,60 @@ if ticker:
         avg_vol = int(df["Volume"].tail(20).mean())
 
         # ─────────────────────────────────────────────
-        # Prophet 예측
+        # Prophet + GBR 앙상블 예측 (날짜 기반 캐시 → 일관성 보장)
         # ─────────────────────────────────────────────
-        KR_HOLIDAYS = {
-            datetime(2024,  1,  1), datetime(2024,  2,  9), datetime(2024,  2, 10),
-            datetime(2024,  2, 12), datetime(2024,  3,  1), datetime(2024,  4, 10),
-            datetime(2024,  5,  5), datetime(2024,  5,  6), datetime(2024,  5, 15),
-            datetime(2024,  6,  6), datetime(2024,  8, 15), datetime(2024,  9, 16),
-            datetime(2024,  9, 17), datetime(2024,  9, 18), datetime(2024, 10,  3),
-            datetime(2024, 10,  9), datetime(2024, 12, 25),
-            datetime(2025,  1,  1), datetime(2025,  1, 28), datetime(2025,  1, 29),
-            datetime(2025,  1, 30), datetime(2025,  3,  1), datetime(2025,  3,  3),
-            datetime(2025,  5,  5), datetime(2025,  5,  6), datetime(2025,  6,  6),
-            datetime(2025,  8, 15), datetime(2025, 10,  3), datetime(2025, 10,  5),
-            datetime(2025, 10,  6), datetime(2025, 10,  7), datetime(2025, 10,  9),
-            datetime(2025, 12, 25),
-            datetime(2026,  1,  1), datetime(2026,  2, 17), datetime(2026,  2, 18),
-            datetime(2026,  2, 19), datetime(2026,  3,  1), datetime(2026,  3,  2),
-            datetime(2026,  5,  5), datetime(2026,  5, 25), datetime(2026,  6,  6),
-            datetime(2026,  8, 17), datetime(2026,  9, 24), datetime(2026,  9, 25),
-            datetime(2026,  9, 28), datetime(2026, 10,  9), datetime(2026, 12, 25),
-        }
+        # 장중 당일 데이터 보완 (차트/메트릭용 df에만 적용)
+        try:
+            from pykrx import stock as _krx
+            _today_str_krx = now_kst().strftime("%Y%m%d")
+            _today_ohlcv = _krx.get_market_ohlcv_by_date(_today_str_krx, _today_str_krx, stock_code)
+            if _today_ohlcv is not None and len(_today_ohlcv) > 0:
+                _tr = _today_ohlcv.iloc[-1]
+                _today_date = pd.Timestamp(_today_ohlcv.index[-1])
+                if _today_date.tz is not None:
+                    _today_date = _today_date.tz_localize(None)
+                _last_date_check = pd.to_datetime(df["Date"]).dt.tz_localize(None).max()
+                if _today_date > _last_date_check and float(_tr["종가"]) > 0:
+                    _new = pd.DataFrame([{
+                        "Date": _today_date,
+                        "Open": float(_tr["시가"]), "High": float(_tr["고가"]),
+                        "Low": float(_tr["저가"]), "Close": float(_tr["종가"]),
+                        "Volume": float(_tr["거래량"]),
+                    }])
+                    df = pd.concat([df, _new], ignore_index=True)
+        except Exception:
+            pass
 
-        def get_kr_trading_days(start_date, count):
-            days = []
-            cur = start_date + timedelta(days=1)
-            while len(days) < count:
-                if cur.weekday() < 5 and cur not in KR_HOLIDAYS:
-                    days.append(cur)
-                cur += timedelta(days=1)
-            return days
-
-        _need_prophet = (st.session_state["cached_fc_future"] is None)
-
-        if _need_prophet:
-          with st.spinner("🤖 기술지표 계산 및 AI 예측 모델 실행 중..."):
-            close = df["Close"]
-            delta = close.diff()
-            gain  = delta.clip(lower=0).rolling(14).mean()
-            loss  = (-delta.clip(upper=0)).rolling(14).mean()
-            rs    = gain / loss.replace(0, 1e-9)
-            df["RSI"] = (100 - 100 / (1 + rs)).fillna(50)
-
-            ema12 = close.ewm(span=12, adjust=False).mean()
-            ema26 = close.ewm(span=26, adjust=False).mean()
-            macd_line   = ema12 - ema26
-            macd_signal_line = macd_line.ewm(span=9, adjust=False).mean()
-            df["MACD_hist"] = (macd_line - macd_signal_line).fillna(0)
-
-            bb_mid = close.rolling(20).mean()
-            bb_std = close.rolling(20).std()
-            df["BB_pct"] = ((close - (bb_mid - 2*bb_std)) / (4*bb_std + 1e-9)).fillna(0.5).clip(0, 1)
-
-            obv = (df["Volume"] * df["Close"].diff().apply(
-                lambda x: 1 if x > 0 else (-1 if x < 0 else 0)
-            )).cumsum()
-            obv_range = obv.max() - obv.min()
-            df["OBV_norm"] = ((obv - obv.min()) / (obv_range + 1e-9)).fillna(0.5)
-
-            # 거래량 비율 (당일 / 20일 평균)
-            df["vol_ratio"] = (df["Volume"] / df["Volume"].rolling(20).mean().replace(0, 1)).fillna(1.0)
-            # MA20 이격도
-            df["ma20_dist"] = ((close - close.rolling(20).mean()) / (close.rolling(20).mean() + 1e-9)).fillna(0)
-
-            POS_WORDS = {"상승","급등","신고가","호실적","흑자","수주","계약","승인","성장","돌파","매수","강세","반등","기대"}
-            NEG_WORDS = {"하락","급락","적자","부진","리스크","매도","약세","손실","취소","조사","소송","경고","우려","악화"}
-
-            sentiment_score = 0.0
-            if news_raw:
-                scores = []
-                for i, n in enumerate(news_raw):
-                    title = n.get("title", "")
-                    pos = sum(1 for w in POS_WORDS if w in title)
-                    neg = sum(1 for w in NEG_WORDS if w in title)
-                    raw_s = (pos - neg) / max(pos + neg, 1) if (pos + neg) > 0 else 0.0
-                    recency_w = 1.0 / (1 + i * 0.2)
-                    scores.append(raw_s * recency_w)
-                sentiment_score = sum(scores) / sum(1.0 / (1 + i * 0.2) for i in range(len(scores))) if scores else 0.0
-
-            # 감성 점수를 컬럼으로 추가 (Prophet regressor)
-            df["sentiment"] = sentiment_score
-
-            REGRESSOR_COLS = ["RSI", "MACD_hist", "BB_pct", "OBV_norm", "sentiment"]
-            df_f = df[["Date", "Close"] + REGRESSOR_COLS].rename(
-                columns={"Date": "ds", "Close": "y"}
-            ).dropna()
-
-            # ── 적응형 Prophet 하이퍼파라미터 ──
-            atr_14 = (df["High"] - df["Low"]).rolling(14).mean()
-            atr_60 = (df["High"] - df["Low"]).rolling(60).mean()
-            if len(atr_14.dropna()) > 0 and len(atr_60.dropna()) > 0:
-                vol_ratio_now = float(atr_14.iloc[-1]) / max(float(atr_60.iloc[-1]), 1e-9)
-                if vol_ratio_now > 2.0:
-                    cps = 0.1
-                elif vol_ratio_now < 0.5:
-                    cps = 0.02
-                else:
-                    cps = 0.05
-            else:
-                cps = 0.05
-
-            model = Prophet(
-                daily_seasonality=False, weekly_seasonality=True,
-                yearly_seasonality=True, changepoint_prior_scale=cps,
-                n_changepoints=15,
+        with st.spinner("🤖 기술지표 계산 및 AI 예측 모델 실행 중..."):
+            _pred_date_key = now_kst().strftime("%Y%m%d")
+            _last_date_str = df["Date"].max().strftime("%Y%m%d")
+            _pred_result = compute_prediction(
+                stock_code, _pred_date_key, pred_days,
+                _last_date_str,
+                json.dumps(news_raw, ensure_ascii=False),
             )
-            for reg in REGRESSOR_COLS:
-                model.add_regressor(reg, standardize=True)
-            model.fit(df_f)
 
-            trading_days = get_kr_trading_days(df["Date"].max(), pred_days)
-            future_dates = pd.DataFrame({"ds": pd.to_datetime(trading_days)})
+        # 예측 결과 복원
+        fc_future = pd.DataFrame(_pred_result["fc_future"])
+        fc_future["ds"] = pd.to_datetime(fc_future["ds"])
+        sentiment_score = _pred_result["sentiment_score"]
+        backtest_mape = _pred_result["backtest_mape"]
 
-            # ── 평균회귀 기반 지표 외삽 ──
-            last_row = df_f.iloc[-1]
-            MEAN_TARGETS = {"RSI": 50.0, "BB_pct": 0.5, "MACD_hist": 0.0, "OBV_norm": 0.5, "sentiment": 0.0}
-            REVERT_SPEED = {"RSI": 0.15, "BB_pct": 0.2, "MACD_hist": 0.25, "OBV_norm": 0.1, "sentiment": 0.3}
-
-            for col in REGRESSOR_COLS:
-                vals, curr_val = [], float(last_row[col])
-                mu = MEAN_TARGETS[col]
-                theta = REVERT_SPEED[col]
-                for step in range(1, pred_days + 1):
-                    curr_val = curr_val + theta * (mu - curr_val)
-                    vals.append(curr_val)
-                future_dates[col] = vals
-
-            future_dates["RSI"]    = future_dates["RSI"].clip(0, 100)
-            future_dates["BB_pct"] = future_dates["BB_pct"].clip(-0.2, 1.2)
-
-            future_all = pd.concat(
-                [df_f[["ds"] + REGRESSOR_COLS], future_dates],
-                ignore_index=True
-            )
-            fc = model.predict(future_all)
-
-            last_date_tmp = df["Date"].max()
-            fc_future_tmp = fc[fc["ds"] > last_date_tmp].copy()
-            prophet_pred = float(fc_future_tmp.iloc[-1]["yhat"])
-
-            # ── GradientBoosting 앙상블 ──
-            GBR_FEATURES = ["RSI", "MACD_hist", "BB_pct", "OBV_norm", "vol_ratio", "ma20_dist"]
-            df_gb = df.dropna(subset=GBR_FEATURES + ["Close"]).copy()
-            df_gb["target"] = df_gb["Close"].shift(-1)
-            df_gb = df_gb.dropna(subset=["target"])
-
-            gbr_pred = prophet_pred
-            if len(df_gb) > 30:
-                try:
-                    X_gb = df_gb[GBR_FEATURES].values
-                    y_gb = df_gb["target"].values
-                    gbr = GradientBoostingRegressor(
-                        n_estimators=100, max_depth=4, learning_rate=0.1,
-                        subsample=0.8, random_state=42
-                    )
-                    gbr.fit(X_gb, y_gb)
-                    last_features = df[GBR_FEATURES].iloc[-1:].values
-                    gbr_pred = float(gbr.predict(last_features)[0])
-                except Exception:
-                    gbr_pred = prophet_pred
-
-            # 가중 평균 (Prophet 60%, GBR 40%)
-            ensemble_pred = prophet_pred * 0.6 + gbr_pred * 0.4
-
-            # ── 예측값 상한/하한 클램프 (일일 상하한가 ±30%) ──
-            _max_daily_pct = 0.15  # 현실적 1일 변동 상한 ±15%
-            _hard_limit_pct = 0.30  # 한국 주식 일일 상하한가
-            _current_close = float(cp)
-
-            # 예측값이 ±15% 초과 시 현재가 쪽으로 당김
-            _pred_pct_raw = (ensemble_pred - _current_close) / _current_close
-            if abs(_pred_pct_raw) > _max_daily_pct:
-                ensemble_pred = _current_close * (1 + np.sign(_pred_pct_raw) * _max_daily_pct)
-
-            # 절대 상하한가 ±30% 클램프
-            ensemble_pred = np.clip(ensemble_pred,
-                                    _current_close * (1 - _hard_limit_pct),
-                                    _current_close * (1 + _hard_limit_pct))
-
-            fc_future_tmp["yhat"] = ensemble_pred
-            spread = float(fc_future_tmp.iloc[-1]["yhat_upper"] - fc_future_tmp.iloc[-1]["yhat_lower"])
-            # 신뢰구간도 ±30% 내로 클램프
-            _max_spread = _current_close * _hard_limit_pct * 2
-            spread = min(spread, _max_spread)
-            fc_future_tmp["yhat_upper"] = min(ensemble_pred + spread * 0.5,
-                                              _current_close * (1 + _hard_limit_pct))
-            fc_future_tmp["yhat_lower"] = max(ensemble_pred - spread * 0.5,
-                                              _current_close * (1 - _hard_limit_pct))
-
-            # ── 백테스팅 (최근 10영업일 MAPE) ──
-            backtest_mape = None
-            if len(df_gb) > 40:
-                try:
-                    X_bt = df_gb[GBR_FEATURES].values
-                    y_bt = df_gb["target"].values
-                    bt_actual = y_bt[-10:]
-                    bt_pred_gbr = []
-                    for i in range(10):
-                        idx = len(X_bt) - 10 + i
-                        gbr_bt = GradientBoostingRegressor(
-                            n_estimators=100, max_depth=4, learning_rate=0.1,
-                            subsample=0.8, random_state=42
-                        )
-                        gbr_bt.fit(X_bt[:idx], y_bt[:idx])
-                        bt_pred_gbr.append(gbr_bt.predict(X_bt[idx:idx+1])[0])
-                    bt_pred_arr = np.array(bt_pred_gbr)
-                    bt_actual_arr = np.array(bt_actual)
-                    backtest_mape = float(np.mean(np.abs((bt_actual_arr - bt_pred_arr) / bt_actual_arr)) * 100)
-                except Exception:
-                    backtest_mape = None
-
-            st.session_state["cached_fc_future"]  = fc_future_tmp
-            st.session_state["cached_sentiment"]   = sentiment_score
-            st.session_state["cached_backtest"]    = backtest_mape
-
+        # 예측 함수에서 계산된 지표를 df에 반영 (차트용)
+        _df_ind = pd.DataFrame(_pred_result["df_with_indicators"])
+        _ind_cols = ["RSI", "MACD_hist", "BB_pct", "OBV_norm", "vol_ratio", "ma20_dist", "sentiment"]
+        if len(df) == len(_df_ind):
+            for _ind_col in _ind_cols:
+                if _ind_col in _df_ind.columns:
+                    df[_ind_col] = _df_ind[_ind_col].values
         else:
-            fc = None
-
-        last_date = df["Date"].max()
-        fc_future = st.session_state["cached_fc_future"] if st.session_state["cached_fc_future"] is not None else fc[fc["ds"] > last_date].copy()
-        sentiment_score = st.session_state["cached_sentiment"] or 0.0
-        backtest_mape   = st.session_state.get("cached_backtest")
+            # df가 장중 보완으로 1행 더 길 경우, 마지막 행은 이전값으로 채움
+            for _ind_col in _ind_cols:
+                if _ind_col in _df_ind.columns:
+                    _vals = list(_df_ind[_ind_col].values)
+                    while len(_vals) < len(df):
+                        _vals.append(_vals[-1] if _vals else 0)
+                    df[_ind_col] = _vals[:len(df)]
 
         pred_end    = krx_tick(fc_future.iloc[-1]["yhat"])
         pred_upper  = krx_tick(fc_future.iloc[-1]["yhat_upper"])
