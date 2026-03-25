@@ -504,23 +504,26 @@ def run_scanner(date_str: str) -> pd.DataFrame:
 # ─────────────────────────────────────────────
 # 모닝 스캐너: Gemini 브리핑 (Top 5)
 # ─────────────────────────────────────────────
-def fetch_scanner_briefing(stock_list: list[dict], today_str: str) -> dict:
-    """Top 5 종목에 대한 짧은 Gemini AI 브리핑을 반환."""
+def fetch_scanner_briefing(stock_code: str, stock_info: dict, today_str: str) -> str:
+    """개별 종목에 대한 짧은 Gemini AI 브리핑을 반환. 종목별 캐시."""
     if "GEMINI_API_KEY" not in st.secrets:
-        return {}
+        return ""
 
+    # 종목별 캐시 확인
     cache_key = f"scanner_ai_{today_str}"
-    if cache_key in st.session_state and st.session_state[cache_key]:
-        return st.session_state[cache_key]
+    if cache_key in st.session_state:
+        cached = st.session_state[cache_key].get(stock_code)
+        if cached:
+            return cached
 
     gemini_key = str(st.secrets["GEMINI_API_KEY"]).strip()
     base_url = "https://generativelanguage.googleapis.com/v1beta/models"
     model = "gemini-2.5-flash-lite"
-    results = {}
+    today_display = f"{today_str[:4]}년 {today_str[4:6]}월 {today_str[6:]}일"
 
-    for stock in stock_list:
-        try:
-            prompt = f"""당신은 한국 주식 전문 애널리스트입니다. 오늘은 {today_str}입니다.
+    stock = stock_info
+    try:
+        prompt = f"""당신은 한국 주식 전문 애널리스트입니다. 오늘은 {today_display}입니다.
 
 [종목 정보]
 - {stock['name']} ({stock['code']}) | 현재가: {stock['price']:,}원 ({stock['change_pct']:+.2f}%)
@@ -537,33 +540,35 @@ def fetch_scanner_briefing(stock_list: list[dict], today_str: str) -> dict:
 - 3줄: 핵심 타점 (진입가, 손절가)
 - 코드블록, disclaimer 등 불필요한 텍스트 절대 금지"""
 
-            url = f"{base_url}/{model}:generateContent?key={gemini_key}"
-            res = requests.post(url, json={
-                "contents": [{"parts": [{"text": prompt}]}],
-                "tools": [{"googleSearch": {}}]
-            }, timeout=30)
+        url = f"{base_url}/{model}:generateContent?key={gemini_key}"
+        res = requests.post(url, json={
+            "contents": [{"parts": [{"text": prompt}]}],
+            "tools": [{"googleSearch": {}}]
+        }, timeout=30)
 
-            if res.status_code == 200:
-                rj = res.json()
-                if "candidates" in rj:
-                    import re as _re
-                    parts = rj["candidates"][0]["content"].get("parts", [])
-                    text = "".join(p.get("text", "") for p in parts if "text" in p).strip()
-                    text = _re.sub(r'```.*?```', '', text, flags=_re.DOTALL)
-                    text = _re.sub(r'print\s*\(.*?\)\s*', '', text, flags=_re.DOTALL)
-                    text = _re.sub(r'google_search\.\w+\(.*?\)', '', text, flags=_re.DOTALL)
-                    text = _re.sub(r'(?i)disclaimer.*', '', text, flags=_re.DOTALL)
-                    text = _re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', text)
-                    text = text.strip()
-                    if text:
-                        results[stock['code']] = text.replace("\n", "<br>")
-            elif res.status_code == 429:
-                break  # 한도 초과 시 중단
-        except Exception:
-            continue
+        if res.status_code == 200:
+            rj = res.json()
+            if "candidates" in rj:
+                import re as _re
+                parts = rj["candidates"][0]["content"].get("parts", [])
+                text = "".join(p.get("text", "") for p in parts if "text" in p).strip()
+                text = _re.sub(r'```.*?```', '', text, flags=_re.DOTALL)
+                text = _re.sub(r'print\s*\(.*?\)\s*', '', text, flags=_re.DOTALL)
+                text = _re.sub(r'google_search\.\w+\(.*?\)', '', text, flags=_re.DOTALL)
+                text = _re.sub(r'(?i)disclaimer.*', '', text, flags=_re.DOTALL)
+                text = _re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', text)
+                text = text.strip()
+                if text:
+                    result = text.replace("\n", "<br>")
+                    # 종목별 캐시 저장
+                    if cache_key not in st.session_state:
+                        st.session_state[cache_key] = {}
+                    st.session_state[cache_key][stock_code] = result
+                    return result
+    except Exception:
+        pass
 
-    st.session_state[cache_key] = results
-    return results
+    return ""
 
 
 # ─────────────────────────────────────────────
@@ -923,50 +928,33 @@ all_stocks["label"] = all_stocks["종목명"] + "  (" + all_stocks["종목코드
 labels = all_stocks["label"].tolist()
 
 # ─────────────────────────────────────────────
-# 상단 컨트롤: 종목 검색만 (예측기간 2일 고정)
+# 상단: 로고 + 시간
 # ─────────────────────────────────────────────
-st.markdown(f"""<div style='display:flex;align-items:center;margin-bottom:2px'>
-            {logo_html}
-            Castle Stock AI &nbsp;<span style='font-size:0.75rem;color:#4a5568;font-weight:400'>믿지 못할 주식 예측</span>"""
-            ,unsafe_allow_html=True
-           )
-st.markdown("<div style='height:0.3rem'></div>", unsafe_allow_html=True)
+_now = now_kst()
+_wd = _now.weekday()
+_hm = _now.hour * 100 + _now.minute
+if _wd >= 5:
+    _mkt_status = "🔴 휴장 (주말)"
+elif _hm < 800:
+    _mkt_status = "🟡 장 시작 전"
+elif _hm < 900:
+    _mkt_status = "🟢 NXT 프리마켓"
+elif _hm <= 1530:
+    _mkt_status = "🟢 정규장"
+elif _hm <= 2000:
+    _mkt_status = "🟢 NXT 애프터마켓"
+else:
+    _mkt_status = "🔴 장 마감"
 
-_col1, _col2, _col3 = st.columns([2.0, 0.4, 0.6], vertical_alignment="bottom")
-with _col1:
-    st.markdown('<p style="font-size:0.72rem;color:#a0aec0;margin-bottom:2px">종목 검색</p>', unsafe_allow_html=True)
-    selected_label = st.selectbox(
-        "종목 검색",
-        [None] + labels,
-        index=0,
-        label_visibility="collapsed",
-        format_func=lambda x: "종목명 또는 코드를 입력하세요" if x is None else x,
-    )
-
-with _col2:
-    _query_btn = st.button("🔍", use_container_width=True)
-
-with _col3:
-    _now = now_kst()
-    _wd = _now.weekday()
-    _hm = _now.hour * 100 + _now.minute
-    if _wd >= 5:
-        _mkt_status = "🔴 휴장 (주말)"
-    elif _hm < 800:
-        _mkt_status = "🟡 장 시작 전"
-    elif _hm < 900:
-        _mkt_status = "🟢 NXT 프리마켓"
-    elif _hm <= 1530:
-        _mkt_status = "🟢 정규장"
-    elif _hm <= 2000:
-        _mkt_status = "🟢 NXT 애프터마켓"
-    else:
-        _mkt_status = "🔴 장 마감"
-    st.markdown(
-        f'<div style="font-size:0.68rem;color:#4a5568;text-align:center;'
-        f'padding-top:22px">{_mkt_status}<br>{_now.strftime("%H:%M")} KST</div>',
-        unsafe_allow_html=True
-    )
+st.markdown(f"""<div style='display:flex;align-items:center;justify-content:space-between;margin-bottom:2px'>
+    <div style='display:flex;align-items:center'>
+        {logo_html}
+        Castle Stock AI &nbsp;<span style='font-size:0.75rem;color:#4a5568;font-weight:400'>믿지 못할 주식 예측</span>
+    </div>
+    <div style='font-size:0.68rem;color:#4a5568;text-align:right'>
+        {_mkt_status}<br>{_now.strftime("%H:%M")} KST
+    </div>
+</div>""", unsafe_allow_html=True)
 
 # 예측기간 1영업일 고정
 pred_days = 1
@@ -977,9 +965,8 @@ if _is_market_open:
     st_autorefresh(interval=60_000, limit=None, key="market_refresh")
 
 # ─────────────────────────────────────────────
-# 탭 구성: 종목 검색 / 추천 종목
+# 전체 화면 탭: 종목 검색 / 추천 종목
 # ─────────────────────────────────────────────
-st.markdown("---")
 _tab_analysis, _tab_scanner = st.tabs(["📊 종목 검색", "🔎 추천 종목"])
 
 # ─── 탭 2: 추천 종목 (모닝 스캐너) ───
@@ -1051,15 +1038,13 @@ with _tab_scanner:
                     )
                 else:
                     with st.spinner(f"🤖 {_row['name']} AI 분석 중..."):
-                        _ai_result = fetch_scanner_briefing([_row.to_dict()], _scanner_date)
-                    _ai_text = _ai_result.get(_code, "")
+                        _ai_text = fetch_scanner_briefing(_code, _row.to_dict(), _scanner_date)
                     if _ai_text:
-                        st.session_state[_scanner_ai_cache_key][_code] = _ai_text
                         st.markdown(f'<div class="scanner-ai">{_ai_text}</div>', unsafe_allow_html=True)
                     else:
                         st.markdown(
                             '<div class="scanner-ai" style="color:#4a5568">'
-                            '⚠️ AI 분석을 가져올 수 없습니다.</div>',
+                            '⚠️ AI 분석을 가져올 수 없습니다. 잠시 후 다시 시도해주세요.</div>',
                             unsafe_allow_html=True
                         )
 
@@ -1071,14 +1056,26 @@ with _tab_scanner:
 
 # ─── 탭 1: 종목 검색 (기존 흐름 그대로) ───
 with _tab_analysis:
-    if selected_label is None:
+    _col1, _col2 = st.columns([2.5, 0.4], vertical_alignment="bottom")
+    with _col1:
+        selected_label = st.selectbox(
+            "종목 검색",
+            [None] + labels,
+            index=0,
+            label_visibility="collapsed",
+            format_func=lambda x: "종목명 또는 코드를 입력하세요" if x is None else x,
+        )
+    with _col2:
+        _query_btn = st.button("🔍", use_container_width=True)
+
+    if selected_label is None and not st.session_state.get("cached_data_key"):
         st.markdown(
             '<div style="text-align:center;color:#4a5568;padding:3rem 0;font-size:0.88rem">'
-            '🔍 상단에서 종목을 검색하고 🔍 버튼을 눌러주세요</div>',
+            '🔍 종목을 검색하고 🔍 버튼을 눌러주세요</div>',
             unsafe_allow_html=True
         )
 
-if selected_label is None:
+if selected_label is None and not st.session_state.get("cached_data_key"):
     st.stop()
 
 # 조회 버튼 클릭 시 캐시 초기화 (재조회 가능)
@@ -1093,9 +1090,13 @@ if not _query_btn:
         st.stop()
     else:
         ticker_cached = st.session_state["cached_data_key"].split("__")[0]
-        sel_row_tmp = all_stocks[all_stocks["label"] == selected_label].iloc[0]
-        if ticker_cached != sel_row_tmp["ticker"]:
+        if selected_label is not None:
+            sel_row_tmp = all_stocks[all_stocks["label"] == selected_label].iloc[0]
+            if ticker_cached != sel_row_tmp["ticker"]:
+                selected_label = all_stocks[all_stocks["ticker"] == ticker_cached]["label"].values[0]
+        else:
             selected_label = all_stocks[all_stocks["ticker"] == ticker_cached]["label"].values[0]
+
 sel_row      = all_stocks[all_stocks["label"] == selected_label].iloc[0]
 ticker       = sel_row["ticker"]
 stock_code   = sel_row["종목코드"]
