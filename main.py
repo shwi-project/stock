@@ -5,6 +5,7 @@ from prophet import Prophet
 from sklearn.ensemble import GradientBoostingRegressor
 import plotly.graph_objects as go
 from streamlit_lightweight_charts import renderLightweightCharts
+from streamlit_autorefresh import st_autorefresh
 import requests
 import json
 import base64
@@ -301,6 +302,34 @@ def fetch_stock_ohlcv(stock_code: str, days: int = 730) -> pd.DataFrame:
 
 
 # ─────────────────────────────────────────────
+# 실시간 현재가 (네이버 금융 폴링 API)
+# ─────────────────────────────────────────────
+def fetch_realtime_price(stock_code: str) -> dict | None:
+    """네이버 금융 실시간 API로 현재가 조회. 장중에만 유효."""
+    try:
+        url = f"https://polling.finance.naver.com/api/realtime/domestic/stock/{stock_code}"
+        resp = requests.get(url, timeout=5)
+        if resp.status_code == 200:
+            data = resp.json()
+            datas = data.get("datas", [])
+            if datas:
+                d = datas[0]
+                return {
+                    "price": int(d.get("closePrice", 0)),
+                    "change": int(d.get("compareToPreviousClosePrice", 0)),
+                    "change_pct": float(d.get("fluctuationsRatio", 0)),
+                    "volume": int(d.get("accumulatedTradingVolume", 0)),
+                    "high": int(d.get("highPrice", 0)),
+                    "low": int(d.get("lowPrice", 0)),
+                    "open": int(d.get("openPrice", 0)),
+                    "time": d.get("localTradedAt", ""),
+                }
+    except Exception:
+        pass
+    return None
+
+
+# ─────────────────────────────────────────────
 # 헬퍼 함수
 # ─────────────────────────────────────────────
 def krx_tick(price: float) -> int:
@@ -381,6 +410,11 @@ with _col3:
 
 # 예측기간 1영업일 고정
 pred_days = 1
+
+# 장중 자동 갱신 (60초 간격, 장중에만)
+_is_market_open = (_wd < 5 and 900 <= _hm <= 1530)
+if _is_market_open:
+    st_autorefresh(interval=60_000, limit=None, key="market_refresh")
 
 if selected_label is None:
     st.markdown('<div style="height:2rem"></div>', unsafe_allow_html=True)
@@ -847,6 +881,36 @@ if ticker:
                 '⚠️ 예측 신뢰 구간이 넓습니다 (변동폭 {:.1f}%). 변동성이 큰 구간이므로 참고용으로만 활용하세요.</div>'.format(_ci_spread_pct),
                 unsafe_allow_html=True
             )
+
+        # ─────────────────────────────────────────────
+        # 실시간 현재가 배너 (장중에만)
+        # ─────────────────────────────────────────────
+        if _is_market_open:
+            _rt = fetch_realtime_price(stock_code)
+            if _rt and _rt["price"] > 0:
+                _rt_color = "#fc5c5c" if _rt["change"] >= 0 else "#4d9fff"
+                _rt_arrow = "▲" if _rt["change"] >= 0 else "▼"
+                _rt_time = _rt["time"][-8:] if len(_rt["time"]) > 8 else _rt["time"]
+                st.markdown(
+                    f'<div style="background:linear-gradient(90deg,#131929 0%,#0f1a2e 100%);'
+                    f'border:1px solid #1e3a5f;border-radius:6px;padding:8px 14px;'
+                    f'margin-bottom:0.5rem;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">'
+                    f'<div style="display:flex;align-items:center;gap:12px">'
+                    f'<span style="font-size:0.6rem;color:#4dc98f;font-weight:600;letter-spacing:1px">LIVE</span>'
+                    f'<span style="font-family:JetBrains Mono,monospace;font-size:1.15rem;font-weight:700;color:#e2e8f0">'
+                    f'{_rt["price"]:,}<span style="font-size:0.75rem;color:#4a5568">원</span></span>'
+                    f'<span style="font-size:0.85rem;color:{_rt_color}">'
+                    f'{_rt_arrow} {abs(_rt["change"]):,}원 ({_rt["change_pct"]:+.2f}%)</span>'
+                    f'</div>'
+                    f'<div style="display:flex;gap:14px;font-size:0.7rem;color:#4a5568">'
+                    f'<span>시가 {_rt["open"]:,}</span>'
+                    f'<span>고가 <span style="color:#fc5c5c">{_rt["high"]:,}</span></span>'
+                    f'<span>저가 <span style="color:#4d9fff">{_rt["low"]:,}</span></span>'
+                    f'<span>거래량 {_rt["volume"]:,}</span>'
+                    f'<span>{_rt_time}</span>'
+                    f'</div></div>',
+                    unsafe_allow_html=True
+                )
 
         # ─────────────────────────────────────────────
         # 차트
