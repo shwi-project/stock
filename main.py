@@ -360,15 +360,6 @@ def run_scanner(date_str: str) -> pd.DataFrame:
     if not fdr and not krx_stock:
         return pd.DataFrame()
 
-    # 종목명 캐시 (이미 로딩된 전체 종목 목록 활용)
-    _name_cache = {}
-    try:
-        _all = load_all_stocks()
-        for _, _r in _all.iterrows():
-            _name_cache[_r["종목코드"]] = _r["종목명"]
-    except Exception:
-        pass
-
     results = []
     start_str = (datetime.strptime(date_str, "%Y%m%d") - timedelta(days=180)).strftime("%Y-%m-%d")
 
@@ -478,7 +469,7 @@ def run_scanner(date_str: str) -> pd.DataFrame:
             if score < 10:
                 continue
 
-            name = _name_cache.get(code, code)
+            name = code  # 이름은 외부에서 매핑
             prev_close = float(close.iloc[-2]) if len(close) >= 2 else float(close.iloc[-1])
             results.append({
                 "code": code,
@@ -969,6 +960,20 @@ if _is_market_open:
 # ─────────────────────────────────────────────
 _tab_analysis, _tab_scanner = st.tabs(["📊 종목 검색", "🔎 추천 종목"])
 
+# ─── 탭 1: 종목 검색 (검색바 + 분석 결과) ───
+with _tab_analysis:
+    _col1, _col2 = st.columns([2.5, 0.4], vertical_alignment="bottom")
+    with _col1:
+        selected_label = st.selectbox(
+            "종목 검색",
+            [None] + labels,
+            index=0,
+            label_visibility="collapsed",
+            format_func=lambda x: "종목명 또는 코드를 입력하세요" if x is None else x,
+        )
+    with _col2:
+        _query_btn = st.button("🔍", use_container_width=True)
+
 # ─── 탭 2: 추천 종목 (모닝 스캐너) ───
 with _tab_scanner:
     _scanner_date = now_kst().strftime("%Y%m%d")
@@ -989,6 +994,15 @@ with _tab_scanner:
             f'⚠️ 스캔 중 오류: {_scan_err}</div>',
             unsafe_allow_html=True
         )
+
+    # 종목명 매핑 (run_scanner 밖에서 처리)
+    if not _scanner_df.empty:
+        try:
+            _all_for_names = load_all_stocks()
+            _name_map = dict(zip(_all_for_names["종목코드"], _all_for_names["종목명"]))
+            _scanner_df["name"] = _scanner_df["code"].map(lambda c: _name_map.get(c, c))
+        except Exception:
+            pass
 
     if _scanner_df.empty:
         st.markdown(
@@ -1054,776 +1068,760 @@ with _tab_scanner:
         unsafe_allow_html=True
     )
 
-# ─── 탭 1: 종목 검색 (기존 흐름 그대로) ───
+
 with _tab_analysis:
-    _col1, _col2 = st.columns([2.5, 0.4], vertical_alignment="bottom")
-    with _col1:
-        selected_label = st.selectbox(
-            "종목 검색",
-            [None] + labels,
-            index=0,
-            label_visibility="collapsed",
-            format_func=lambda x: "종목명 또는 코드를 입력하세요" if x is None else x,
-        )
-    with _col2:
-        _query_btn = st.button("🔍", use_container_width=True)
+
+    # ─── 종목 분석 로직 (탭 밖에서 계산, 결과는 _tab_analysis에 렌더) ───
 
     if selected_label is None and not st.session_state.get("cached_data_key"):
-        st.markdown(
-            '<div style="text-align:center;color:#4a5568;padding:3rem 0;font-size:0.88rem">'
-            '🔍 종목을 검색하고 🔍 버튼을 눌러주세요</div>',
-            unsafe_allow_html=True
-        )
+        st.stop()
 
-if selected_label is None and not st.session_state.get("cached_data_key"):
-    st.stop()
+    # 조회 버튼 클릭 시 캐시 초기화 (재조회 가능)
+    if _query_btn:
+        for _k in ["cached_data_key", "cached_df", "cached_news_raw",
+                   "cached_news_status", "cached_ai_html", "cached_ai_src",
+                   "cached_fc_future", "cached_sentiment", "cached_backtest"]:
+            st.session_state[_k] = None
 
-# 조회 버튼 클릭 시 캐시 초기화 (재조회 가능)
-if _query_btn:
+    if not _query_btn:
+        if st.session_state.get("cached_data_key") is None:
+            st.stop()
+        else:
+            ticker_cached = st.session_state["cached_data_key"].split("__")[0]
+            if selected_label is not None:
+                sel_row_tmp = all_stocks[all_stocks["label"] == selected_label].iloc[0]
+                if ticker_cached != sel_row_tmp["ticker"]:
+                    selected_label = all_stocks[all_stocks["ticker"] == ticker_cached]["label"].values[0]
+            else:
+                selected_label = all_stocks[all_stocks["ticker"] == ticker_cached]["label"].values[0]
+
+    sel_row      = all_stocks[all_stocks["label"] == selected_label].iloc[0]
+    ticker       = sel_row["ticker"]
+    stock_code   = sel_row["종목코드"]
+    market       = sel_row["시장"]
+    display_name = sel_row["종목명"]
+
+    # ─────────────────────────────────────────────
+    # 시장 배지
+    # ─────────────────────────────────────────────
+    badge_class = "badge-kospi" if market == "KOSPI" else "badge-kosdaq"
+    st.markdown(f'<span class="badge {badge_class}">{market}</span>', unsafe_allow_html=True)
+
+
+    # ─────────────────────────────────────────────
+    # session_state 캐시 키 초기화
+    # ─────────────────────────────────────────────
+    _data_key = f"{ticker}__{int(pred_days)}"
     for _k in ["cached_data_key", "cached_df", "cached_news_raw",
                "cached_news_status", "cached_ai_html", "cached_ai_src",
                "cached_fc_future", "cached_sentiment", "cached_backtest"]:
-        st.session_state[_k] = None
-
-if not _query_btn:
-    if st.session_state.get("cached_data_key") is None:
-        st.stop()
-    else:
-        ticker_cached = st.session_state["cached_data_key"].split("__")[0]
-        if selected_label is not None:
-            sel_row_tmp = all_stocks[all_stocks["label"] == selected_label].iloc[0]
-            if ticker_cached != sel_row_tmp["ticker"]:
-                selected_label = all_stocks[all_stocks["ticker"] == ticker_cached]["label"].values[0]
-        else:
-            selected_label = all_stocks[all_stocks["ticker"] == ticker_cached]["label"].values[0]
-
-sel_row      = all_stocks[all_stocks["label"] == selected_label].iloc[0]
-ticker       = sel_row["ticker"]
-stock_code   = sel_row["종목코드"]
-market       = sel_row["시장"]
-display_name = sel_row["종목명"]
-
-# ─────────────────────────────────────────────
-# 시장 배지
-# ─────────────────────────────────────────────
-badge_class = "badge-kospi" if market == "KOSPI" else "badge-kosdaq"
-st.markdown(f'<span class="badge {badge_class}">{market}</span>', unsafe_allow_html=True)
+        if _k not in st.session_state:
+            st.session_state[_k] = None
 
 
-# ─────────────────────────────────────────────
-# session_state 캐시 키 초기화
-# ─────────────────────────────────────────────
-_data_key = f"{ticker}__{int(pred_days)}"
-for _k in ["cached_data_key", "cached_df", "cached_news_raw",
-           "cached_news_status", "cached_ai_html", "cached_ai_src",
-           "cached_fc_future", "cached_sentiment", "cached_backtest"]:
-    if _k not in st.session_state:
-        st.session_state[_k] = None
-
-
-# ─────────────────────────────────────────────
-# 데이터 로딩
-# ─────────────────────────────────────────────
-if ticker:
-    try:
-        _need_reload = (st.session_state["cached_data_key"] != _data_key)
-
-        if _need_reload:
-            with st.spinner("📡 데이터를 불러오는 중..."):
-                df = fetch_stock_ohlcv(stock_code, days=730)
-
-                def fetch_naver_news(stock_name: str, max_items: int = 5) -> tuple[list, str]:
-                    import re
-                    from urllib.parse import urlparse
-                    if "NAVER_CLIENT_ID" not in st.secrets or "NAVER_CLIENT_SECRET" not in st.secrets:
-                        return [], "no_key"
-                    NAVER_HEADERS = {
-                        "X-Naver-Client-Id":     st.secrets["NAVER_CLIENT_ID"],
-                        "X-Naver-Client-Secret": st.secrets["NAVER_CLIENT_SECRET"],
-                    }
-                    def _call(query, display):
-                        try:
-                            resp = requests.get(
-                                "https://openapi.naver.com/v1/search/news.json",
-                                params={"query": query, "display": display, "sort": "date"},
-                                headers=NAVER_HEADERS, timeout=8,
-                            )
-                            return resp.json().get("items", []), resp.status_code
-                        except Exception:
-                            return [], -1
-                    def _parse(raw_items):
-                        parsed, seen = [], set()
-                        for it in raw_items:
-                            title = re.sub(r"<[^>]+>", "", it.get("title", "")).strip()
-                            if not title or title in seen: continue
-                            seen.add(title)
-                            pub_raw = it.get("pubDate", "")
-                            try: pub = datetime.strptime(pub_raw, "%a, %d %b %Y %H:%M:%S %z").strftime("%m/%d")
-                            except Exception: pub = pub_raw[:10]
-                            parsed.append({
-                                "title": title,
-                                "link":  it.get("originallink") or it.get("link", "#"),
-                                "pub":   pub,
-                                "desc":  re.sub(r"<[^>]+>", "", it.get("description", "")).strip(),
-                            })
-                        return parsed
-                    FIN_DOMAINS = {
-                        "hankyung.com","mk.co.kr","sedaily.com","edaily.co.kr",
-                        "thebell.co.kr","infostock.co.kr","news.einfomax.co.kr",
-                        "businesspost.co.kr","investchosun.com","newsis.com",
-                        "yna.co.kr","etnews.com","finance.naver.com",
-                    }
-                    NOISE_WORDS = {
-                        "패션","맛집","여행","스타일","뷰티","연애","요리",
-                        "육아","인테리어","레시피","유튜브","BJ","아이돌",
-                        "살 빠지는","모발","단발","젤리핑","서울시교육청",
-                    }
-                    def _is_noise(t): return any(w in t for w in NOISE_WORDS)
-                    def _domain(url):
-                        try: return __import__('urllib.parse', fromlist=['urlparse']).urlparse(url).netloc.replace("www.","")
-                        except: return ""
-                    try:
-                        all_items, seen_titles = [], set()
-                        status_codes = []
-                        for query in [f"{stock_name} 증권 주가", f"{stock_name} 주식"]:
-                            raw, sc = _call(query, 20)
-                            status_codes.append(sc)
-                            for it in _parse(raw):
-                                if it["title"] not in seen_titles and not _is_noise(it["title"]):
-                                    seen_titles.add(it["title"])
-                                    it["is_fin"] = any(fd in _domain(it["link"]) for fd in FIN_DOMAINS)
-                                    all_items.append(it)
-                        all_items.sort(key=lambda x: (0 if x["is_fin"] else 1))
-                        if not all_items: return [], f"empty:{status_codes}"
-                        return all_items[:max_items], "ok"
-                    except requests.exceptions.Timeout:
-                        return [], "api_error:요청 시간 초과"
-                    except Exception as ex:
-                        return [], f"api_error:{ex}"
-
-                news_raw, news_status = fetch_naver_news(display_name, max_items=5)
-                news_txt = " ".join([n["title"] for n in news_raw])
-
-            st.session_state["cached_data_key"]    = _data_key
-            st.session_state["cached_df"]          = df
-            st.session_state["cached_news_raw"]    = news_raw
-            st.session_state["cached_news_status"] = news_status
-            st.session_state["cached_ai_html"]     = None
-            st.session_state["cached_ai_src"]      = None
-            st.session_state["cached_fc_future"]   = None
-            st.session_state["cached_sentiment"]   = None
-            st.session_state["cached_backtest"]    = None
-
-        else:
-            df          = st.session_state["cached_df"]
-            news_raw    = st.session_state["cached_news_raw"]
-            news_status = st.session_state["cached_news_status"]
-            news_txt    = " ".join([n["title"] for n in news_raw])
-
-        if df.empty:
-            st.error("⚠️ 데이터를 불러올 수 없습니다. 티커를 확인해 주세요.")
-            st.stop()
-
-        df.loc[df["Open"] <= 0, "Open"] = df["Close"]
-        df.loc[df["High"] <= 0, "High"] = df["Close"]
-        df.loc[df["Low"]  <= 0, "Low"]  = df["Close"]
-
-        df["Date"] = pd.to_datetime(df["Date"]).dt.tz_localize(None)
-        df["time"] = df["Date"].dt.strftime("%Y-%m-%d")
-        df["MA3"]   = df["Close"].rolling(3).mean()
-        df["MA5"]   = df["Close"].rolling(5).mean()
-        df["MA10"]  = df["Close"].rolling(10).mean()
-        df["MA20"]  = df["Close"].rolling(20).mean()
-        df["MA60"]  = df["Close"].rolling(60).mean()
-        df["MA120"] = df["Close"].rolling(120).mean()
-
-        cp      = df.iloc[-1]["Close"]
-        pp      = df.iloc[-2]["Close"]
-        diff    = cp - pp
-        pct     = (diff / pp) * 100
-        high52  = df["High"].max()
-        low52   = df["Low"].min()
-        avg_vol = int(df["Volume"].tail(20).mean())
-
-        # ─────────────────────────────────────────────
-        # Prophet + GBR 앙상블 예측 (날짜 기반 캐시 → 일관성 보장)
-        # ─────────────────────────────────────────────
-        # 장중 당일 데이터 보완 (차트/메트릭용 df에만 적용)
+    # ─────────────────────────────────────────────
+    # 데이터 로딩
+    # ─────────────────────────────────────────────
+    if ticker:
         try:
-            from pykrx import stock as _krx
-            _today_str_krx = now_kst().strftime("%Y%m%d")
-            _today_ohlcv = _krx.get_market_ohlcv_by_date(_today_str_krx, _today_str_krx, stock_code)
-            if _today_ohlcv is not None and len(_today_ohlcv) > 0:
-                _tr = _today_ohlcv.iloc[-1]
-                _today_date = pd.Timestamp(_today_ohlcv.index[-1])
-                if _today_date.tz is not None:
-                    _today_date = _today_date.tz_localize(None)
-                _last_date_check = pd.to_datetime(df["Date"]).dt.tz_localize(None).max()
-                if _today_date > _last_date_check and float(_tr["종가"]) > 0:
-                    _new = pd.DataFrame([{
-                        "Date": _today_date,
-                        "Open": float(_tr["시가"]), "High": float(_tr["고가"]),
-                        "Low": float(_tr["저가"]), "Close": float(_tr["종가"]),
-                        "Volume": float(_tr["거래량"]),
-                    }])
-                    df = pd.concat([df, _new], ignore_index=True)
-        except Exception:
-            pass
+            _need_reload = (st.session_state["cached_data_key"] != _data_key)
 
-        with st.spinner("🤖 기술지표 계산 및 AI 예측 모델 실행 중..."):
-            _pred_date_key = now_kst().strftime("%Y%m%d")
-            _last_date_str = df["Date"].max().strftime("%Y%m%d")
-            _pred_result = compute_prediction(
-                stock_code, _pred_date_key, pred_days,
-                _last_date_str,
-                json.dumps(news_raw, ensure_ascii=False),
-            )
+            if _need_reload:
+                with st.spinner("📡 데이터를 불러오는 중..."):
+                    df = fetch_stock_ohlcv(stock_code, days=730)
 
-        # 예측 결과 복원
-        fc_future = pd.DataFrame(_pred_result["fc_future"])
-        fc_future["ds"] = pd.to_datetime(fc_future["ds"])
-        sentiment_score = _pred_result["sentiment_score"]
-        backtest_mape = _pred_result["backtest_mape"]
+                    def fetch_naver_news(stock_name: str, max_items: int = 5) -> tuple[list, str]:
+                        import re
+                        from urllib.parse import urlparse
+                        if "NAVER_CLIENT_ID" not in st.secrets or "NAVER_CLIENT_SECRET" not in st.secrets:
+                            return [], "no_key"
+                        NAVER_HEADERS = {
+                            "X-Naver-Client-Id":     st.secrets["NAVER_CLIENT_ID"],
+                            "X-Naver-Client-Secret": st.secrets["NAVER_CLIENT_SECRET"],
+                        }
+                        def _call(query, display):
+                            try:
+                                resp = requests.get(
+                                    "https://openapi.naver.com/v1/search/news.json",
+                                    params={"query": query, "display": display, "sort": "date"},
+                                    headers=NAVER_HEADERS, timeout=8,
+                                )
+                                return resp.json().get("items", []), resp.status_code
+                            except Exception:
+                                return [], -1
+                        def _parse(raw_items):
+                            parsed, seen = [], set()
+                            for it in raw_items:
+                                title = re.sub(r"<[^>]+>", "", it.get("title", "")).strip()
+                                if not title or title in seen: continue
+                                seen.add(title)
+                                pub_raw = it.get("pubDate", "")
+                                try: pub = datetime.strptime(pub_raw, "%a, %d %b %Y %H:%M:%S %z").strftime("%m/%d")
+                                except Exception: pub = pub_raw[:10]
+                                parsed.append({
+                                    "title": title,
+                                    "link":  it.get("originallink") or it.get("link", "#"),
+                                    "pub":   pub,
+                                    "desc":  re.sub(r"<[^>]+>", "", it.get("description", "")).strip(),
+                                })
+                            return parsed
+                        FIN_DOMAINS = {
+                            "hankyung.com","mk.co.kr","sedaily.com","edaily.co.kr",
+                            "thebell.co.kr","infostock.co.kr","news.einfomax.co.kr",
+                            "businesspost.co.kr","investchosun.com","newsis.com",
+                            "yna.co.kr","etnews.com","finance.naver.com",
+                        }
+                        NOISE_WORDS = {
+                            "패션","맛집","여행","스타일","뷰티","연애","요리",
+                            "육아","인테리어","레시피","유튜브","BJ","아이돌",
+                            "살 빠지는","모발","단발","젤리핑","서울시교육청",
+                        }
+                        def _is_noise(t): return any(w in t for w in NOISE_WORDS)
+                        def _domain(url):
+                            try: return __import__('urllib.parse', fromlist=['urlparse']).urlparse(url).netloc.replace("www.","")
+                            except: return ""
+                        try:
+                            all_items, seen_titles = [], set()
+                            status_codes = []
+                            for query in [f"{stock_name} 증권 주가", f"{stock_name} 주식"]:
+                                raw, sc = _call(query, 20)
+                                status_codes.append(sc)
+                                for it in _parse(raw):
+                                    if it["title"] not in seen_titles and not _is_noise(it["title"]):
+                                        seen_titles.add(it["title"])
+                                        it["is_fin"] = any(fd in _domain(it["link"]) for fd in FIN_DOMAINS)
+                                        all_items.append(it)
+                            all_items.sort(key=lambda x: (0 if x["is_fin"] else 1))
+                            if not all_items: return [], f"empty:{status_codes}"
+                            return all_items[:max_items], "ok"
+                        except requests.exceptions.Timeout:
+                            return [], "api_error:요청 시간 초과"
+                        except Exception as ex:
+                            return [], f"api_error:{ex}"
 
-        # 예측 함수에서 계산된 지표를 df에 반영 (차트용)
-        _df_ind = pd.DataFrame(_pred_result["df_with_indicators"])
-        _ind_cols = ["RSI", "MACD_hist", "BB_pct", "OBV_norm", "vol_ratio", "ma20_dist", "sentiment"]
-        if len(df) == len(_df_ind):
-            for _ind_col in _ind_cols:
-                if _ind_col in _df_ind.columns:
-                    df[_ind_col] = _df_ind[_ind_col].values
-        else:
-            # df가 장중 보완으로 1행 더 길 경우, 마지막 행은 이전값으로 채움
-            for _ind_col in _ind_cols:
-                if _ind_col in _df_ind.columns:
-                    _vals = list(_df_ind[_ind_col].values)
-                    while len(_vals) < len(df):
-                        _vals.append(_vals[-1] if _vals else 0)
-                    df[_ind_col] = _vals[:len(df)]
+                    news_raw, news_status = fetch_naver_news(display_name, max_items=5)
+                    news_txt = " ".join([n["title"] for n in news_raw])
 
-        pred_end    = krx_tick(fc_future.iloc[-1]["yhat"])
-        pred_upper  = krx_tick(fc_future.iloc[-1]["yhat_upper"])
-        pred_lower  = krx_tick(fc_future.iloc[-1]["yhat_lower"])
-        pred_change = pred_end - int(cp)
-        pred_pct    = (pred_change / cp) * 100
+                st.session_state["cached_data_key"]    = _data_key
+                st.session_state["cached_df"]          = df
+                st.session_state["cached_news_raw"]    = news_raw
+                st.session_state["cached_news_status"] = news_status
+                st.session_state["cached_ai_html"]     = None
+                st.session_state["cached_ai_src"]      = None
+                st.session_state["cached_fc_future"]   = None
+                st.session_state["cached_sentiment"]   = None
+                st.session_state["cached_backtest"]    = None
 
-        cur_rsi     = round(float(df["RSI"].iloc[-1]), 1)
-        cur_macd    = round(float(df["MACD_hist"].iloc[-1]), 2)
-        cur_bb      = round(float(df["BB_pct"].iloc[-1]) * 100, 1)
-        rsi_signal  = "과매수" if cur_rsi > 70 else ("과매도" if cur_rsi < 30 else "중립")
-        macd_signal = "상승" if cur_macd > 0 else "하락"
-        bb_signal   = "상단돌파" if cur_bb > 80 else ("하단이탈" if cur_bb < 20 else "중립")
-
-        # ─────────────────────────────────────────────
-        # 상단 메트릭
-        # ─────────────────────────────────────────────
-        color_cls  = "metric-up" if diff >= 0 else "metric-down"
-        arrow      = "▲" if diff >= 0 else "▼"
-        pred_color = "metric-up" if pred_change >= 0 else "metric-down"
-        pred_arrow = "▲" if pred_change >= 0 else "▼"
-        rsi_color  = "#fc5c5c" if cur_rsi > 70 else ("#4d9fff" if cur_rsi < 30 else "#a0aec0")
-
-        st.markdown(f"""
-        <div class="metrics-grid">
-            <div class="metric-card">
-                <div class="metric-label">현재가</div>
-                <div class="metric-value">{int(cp):,}<span class="unit">원</span></div>
-                <div class="{color_cls} metric-sub">{arrow} {abs(int(diff)):,}원 ({pct:+.2f}%)</div>
-            </div>
-            <div class="metric-card">
-                <div class="metric-label">내일 예측가 (앙상블)</div>
-                <div class="metric-value {pred_color}">{pred_end:,}<span class="unit">원</span></div>
-                <div class="{pred_color} metric-sub">{pred_arrow} {abs(pred_change):,}원 ({pred_pct:+.2f}%)</div>
-            </div>
-            <div class="metric-card">
-                <div class="metric-label">예측 범위</div>
-                <div class="metric-value" style="font-size:0.9rem"><span style="color:#00cec9">{pred_lower:,}</span> ~ <span style="color:#a55eea">{pred_upper:,}</span></div>
-                <div class="metric-sub" style="color:#4a5568">신뢰 구간 (하한~상한)</div>
-            </div>
-            <div class="metric-card">
-                <div class="metric-label">예측 오차율</div>
-                <div class="metric-value" style="font-size:0.95rem;color:{'#4dc98f' if backtest_mape is not None and backtest_mape < 3 else '#f9a825' if backtest_mape is not None and backtest_mape < 5 else '#fc5c5c' if backtest_mape is not None else '#4a5568'}">{f'{backtest_mape:.1f}%' if backtest_mape is not None else '-'}</div>
-                <div class="metric-sub" style="color:#4a5568">{'MAPE 10일 백테스트' if backtest_mape is not None else '데이터 부족'}</div>
-            </div>
-            <div class="metric-card">
-                <div class="metric-label">기술지표</div>
-                <div class="metric-value" style="font-size:0.9rem;line-height:1.5">
-                    <span style="color:{rsi_color}">RSI {cur_rsi}</span>
-                    <span style="color:#4a5568"> · </span>
-                    <span style="color:{'#fc5c5c' if cur_macd>0 else '#4d9fff'}">MACD {'▲' if cur_macd>0 else '▼'}</span>
-                    <span style="color:#4a5568"> · </span>
-                    <span style="color:#a0aec0">BB {cur_bb}%</span>
-                </div>
-                <div class="metric-sub" style="color:#4a5568">{rsi_signal} · MACD {macd_signal} · {bb_signal}</div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-
-        # ─────────────────────────────────────────────
-        # 실시간 현재가 + NXT 배너
-        # ─────────────────────────────────────────────
-        if _is_market_open:
-            # 정규장 실시간 (09:00~15:30)
-            _rt = fetch_realtime_price(stock_code) if (900 <= _hm <= 1530) else None
-            if _rt and _rt["price"] > 0:
-                _rt_color = "#fc5c5c" if _rt["change"] >= 0 else "#4d9fff"
-                _rt_arrow = "▲" if _rt["change"] >= 0 else "▼"
-                _rt_time = _rt["time"][-8:] if len(_rt["time"]) > 8 else _rt["time"]
-                st.markdown(
-                    f'<div style="background:linear-gradient(90deg,#131929 0%,#0f1a2e 100%);'
-                    f'border:1px solid #1e3a5f;border-radius:6px;padding:8px 14px;'
-                    f'margin-bottom:0.5rem;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">'
-                    f'<div style="display:flex;align-items:center;gap:12px">'
-                    f'<span style="font-size:0.6rem;color:#4dc98f;font-weight:600;letter-spacing:1px">LIVE</span>'
-                    f'<span style="font-family:JetBrains Mono,monospace;font-size:1.15rem;font-weight:700;color:#e2e8f0">'
-                    f'{_rt["price"]:,}<span style="font-size:0.75rem;color:#4a5568">원</span></span>'
-                    f'<span style="font-size:0.85rem;color:{_rt_color}">'
-                    f'{_rt_arrow} {abs(_rt["change"]):,}원 ({_rt["change_pct"]:+.2f}%)</span>'
-                    f'</div>'
-                    f'<div style="display:flex;gap:14px;font-size:0.7rem;color:#4a5568">'
-                    f'<span>시가 {_rt["open"]:,}</span>'
-                    f'<span>고가 <span style="color:#fc5c5c">{_rt["high"]:,}</span></span>'
-                    f'<span>저가 <span style="color:#4d9fff">{_rt["low"]:,}</span></span>'
-                    f'<span>거래량 {_rt["volume"]:,}</span>'
-                    f'<span>{_rt_time}</span>'
-                    f'</div></div>',
-                    unsafe_allow_html=True
-                )
-
-            # NXT 가격 (프리마켓 / 애프터마켓)
-            _nxt = fetch_nxt_price(stock_code)
-            if _nxt and _nxt["price"] > 0:
-                _nxt_color = "#fc5c5c" if _nxt["change"] >= 0 else "#4d9fff"
-                _nxt_arrow = "▲" if _nxt["change"] >= 0 else "▼"
-                _nxt_session = "프리마켓" if _nxt["session"] == "PRE_MARKET" else "애프터마켓"
-                _nxt_status_dot = "🟢" if _nxt["status"] == "OPEN" else "⚫"
-                _nxt_time = _nxt["time"][-14:-6] if len(_nxt["time"]) > 14 else _nxt["time"]
-                st.markdown(
-                    f'<div style="background:linear-gradient(90deg,#1a1a0e 0%,#1a1508 100%);'
-                    f'border:1px solid #3d3a1e;border-radius:6px;padding:6px 14px;'
-                    f'margin-bottom:0.5rem;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">'
-                    f'<div style="display:flex;align-items:center;gap:12px">'
-                    f'<span style="font-size:0.6rem;color:#f9a825;font-weight:600;letter-spacing:1px">{_nxt_status_dot} NXT {_nxt_session}</span>'
-                    f'<span style="font-family:JetBrains Mono,monospace;font-size:1.05rem;font-weight:700;color:#e2e8f0">'
-                    f'{_nxt["price"]:,}<span style="font-size:0.75rem;color:#4a5568">원</span></span>'
-                    f'<span style="font-size:0.8rem;color:{_nxt_color}">'
-                    f'{_nxt_arrow} {abs(_nxt["change"]):,}원 ({_nxt["change_pct"]:+.2f}%)</span>'
-                    f'</div>'
-                    f'<div style="font-size:0.68rem;color:#4a5568">{_nxt_time}</div>'
-                    f'</div>',
-                    unsafe_allow_html=True
-                )
-        else:
-            # 장 마감 후에도 NXT 종가 표시
-            _nxt = fetch_nxt_price(stock_code)
-            if _nxt and _nxt["price"] > 0:
-                _nxt_color = "#fc5c5c" if _nxt["change"] >= 0 else "#4d9fff"
-                _nxt_arrow = "▲" if _nxt["change"] >= 0 else "▼"
-                _nxt_session = "프리마켓" if _nxt["session"] == "PRE_MARKET" else "애프터마켓"
-                _nxt_time = _nxt["time"][-14:-6] if len(_nxt["time"]) > 14 else _nxt["time"]
-                st.markdown(
-                    f'<div style="background:linear-gradient(90deg,#1a1a0e 0%,#1a1508 100%);'
-                    f'border:1px solid #3d3a1e;border-radius:6px;padding:6px 14px;'
-                    f'margin-bottom:0.5rem;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">'
-                    f'<div style="display:flex;align-items:center;gap:12px">'
-                    f'<span style="font-size:0.6rem;color:#f9a825;font-weight:600;letter-spacing:1px">NXT {_nxt_session} (마감)</span>'
-                    f'<span style="font-family:JetBrains Mono,monospace;font-size:1.05rem;font-weight:700;color:#e2e8f0">'
-                    f'{_nxt["price"]:,}<span style="font-size:0.75rem;color:#4a5568">원</span></span>'
-                    f'<span style="font-size:0.8rem;color:{_nxt_color}">'
-                    f'{_nxt_arrow} {abs(_nxt["change"]):,}원 ({_nxt["change_pct"]:+.2f}%)</span>'
-                    f'</div>'
-                    f'<div style="font-size:0.68rem;color:#4a5568">{_nxt_time}</div>'
-                    f'</div>',
-                    unsafe_allow_html=True
-                )
-
-        # ─────────────────────────────────────────────
-        # 차트
-        # ─────────────────────────────────────────────
-        st.markdown('<div class="section-header">📊 프로 차트 — TradingView Engine</div>', unsafe_allow_html=True)
-
-        cdl, m3, m5, m10, m20, m60, m120, vol = [], [], [], [], [], [], [], []
-        df_chart = df.dropna(subset=["Open","High","Low","Close","Volume"]).copy()
-
-        for _, r in df_chart.iterrows():
-            tm = r["time"]
-            o, h, l, c = float(r["Open"]), float(r["High"]), float(r["Low"]), float(r["Close"])
-            if any(v != v or abs(v) == float("inf") for v in [o, h, l, c]):
-                continue
-            cdl.append({"time":tm,"open":krx_tick(o),"high":krx_tick(h),"low":krx_tick(l),"close":krx_tick(c)})
-            if pd.notna(r["MA3"]):   m3.append({"time":tm,"value":int(krx_tick(float(r["MA3"])))})
-            if pd.notna(r["MA5"]):   m5.append({"time":tm,"value":int(krx_tick(float(r["MA5"])))})
-            if pd.notna(r["MA10"]):  m10.append({"time":tm,"value":int(krx_tick(float(r["MA10"])))})
-            if pd.notna(r["MA20"]):  m20.append({"time":tm,"value":int(krx_tick(float(r["MA20"])))})
-            if pd.notna(r["MA60"]):  m60.append({"time":tm,"value":int(krx_tick(float(r["MA60"])))})
-            if pd.notna(r["MA120"]): m120.append({"time":tm,"value":int(krx_tick(float(r["MA120"])))})
-            vol_val = float(r["Volume"])
-            if vol_val == vol_val:
-                vc = "rgba(252,92,92,0.55)" if c >= o else "rgba(77,159,255,0.55)"
-                vol.append({"time":tm,"value":int(vol_val),"color":vc})
-
-        pred_line = [{"time":df.iloc[-1]["time"],"value":krx_tick(float(cp))}]
-        for _, r in fc_future.iterrows():
-            pred_line.append({"time":r["ds"].strftime("%Y-%m-%d"),"value":krx_tick(r["yhat"])})
-
-        pred_upper_line = [{"time":df.iloc[-1]["time"],"value":krx_tick(float(cp))}]
-        pred_lower_line = [{"time":df.iloc[-1]["time"],"value":krx_tick(float(cp))}]
-        for _, r in fc_future.iterrows():
-            td = r["ds"].strftime("%Y-%m-%d")
-            pred_upper_line.append({"time":td,"value":krx_tick(r["yhat_upper"])})
-            pred_lower_line.append({"time":td,"value":krx_tick(r["yhat_lower"])})
-
-        total_bars = len(cdl)
-        zoom_from  = cdl[max(0, total_bars-60)]["time"] if cdl else None
-
-        import streamlit.components.v1 as components
-        import json as _json
-
-        _chart_data = _json.dumps({
-            "cdl":cdl,"vol":vol,
-            "m3":m3,"m5":m5,"m10":m10,"m20":m20,"m60":m60,"m120":m120,
-            "pred_line":pred_line,"pred_upper":pred_upper_line,"pred_lower":pred_lower_line,
-            "pred_days":pred_days,"zoom_from":zoom_from,"cp":int(cp),
-        })
-
-        components.html(f"""
-<!DOCTYPE html>
-<html>
-<head>
-<script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
-<style>
-  body {{ margin:0; background:#0b0e17; overflow:hidden; }}
-  #chart-container {{ position:relative; width:100%; height:380px; }}
-  #legend {{ display:flex; flex-wrap:wrap; gap:6px; padding:4px 2px; font-family:'JetBrains Mono',monospace; }}
-  .leg-item {{ font-size:0.62rem; cursor:pointer; padding:2px 6px; border-radius:3px; border:1px solid #2d3a55; user-select:none; transition:opacity 0.2s; }}
-  .leg-item.hidden {{ opacity:0.3; text-decoration:line-through; }}
-  #hover-info {{ position:absolute; top:10px; left:10px; z-index:10; font-family:'JetBrains Mono',monospace; font-size:0.75rem; color:#a0aec0; pointer-events:none; text-shadow:1px 1px 2px #0b0e17; }}
-</style>
-</head>
-<body>
-<div id="legend"></div>
-<div id="chart-container">
-  <div id="hover-info"></div>
-  <div id="chart" style="width:100%;height:100%;"></div>
-</div>
-<script>
-const D = {_chart_data};
-const chart = LightweightCharts.createChart(document.getElementById('chart'), {{
-  layout:{{ background:{{type:'Solid',color:'#0b0e17'}}, textColor:'#a0aec0' }},
-  grid:{{ vertLines:{{color:'#1a2030'}}, horzLines:{{color:'#1a2030'}} }},
-  crosshair:{{ mode:1 }},
-  rightPriceScale:{{ borderColor:'#1e2435' }},
-  timeScale:{{ borderColor:'#1e2435', barSpacing:8, rightOffset:10 }},
-  localization:{{ priceFormatter: p => Math.round(p).toLocaleString('ko-KR') }},
-}});
-const candle = chart.addCandlestickSeries({{
-  upColor:'#fc5c5c', downColor:'#4d9fff', borderVisible:false,
-  wickUpColor:'#fc5c5c', wickDownColor:'#4d9fff',
-  priceFormat:{{type:'price',precision:0,minMove:1}},
-  lastValueVisible:false, priceLineVisible:false,
-}});
-candle.setData(D.cdl);
-candle.createPriceLine({{ price:D.cp, color:'rgba(0,0,0,0)', lineWidth:0, lineStyle:2, axisLabelVisible:true, title:'현재가' }});
-const volSeries = chart.addHistogramSeries({{
-  color:'rgba(120,120,120,0.5)', priceScaleId:'vol',
-  lastValueVisible:false, priceLineVisible:false,
-  priceFormat:{{type:'volume',precision:0,minMove:1}},
-}});
-chart.priceScale('vol').applyOptions({{ scaleMargins:{{top:0.85,bottom:0}}, borderVisible:false }});
-volSeries.setData(D.vol);
-const maList = [
-  {{color:'#ff6b9d',width:1,  label:'3MA',  data:D.m3,  vis:false}},
-  {{color:'#00e676',width:1,  label:'5MA',  data:D.m5,  vis:true}},
-  {{color:'#00bcd4',width:1,  label:'10MA', data:D.m10, vis:true}},
-  {{color:'#ffb300',width:1.5,label:'20MA', data:D.m20, vis:false}},
-  {{color:'#e040fb',width:1,  label:'60MA', data:D.m60, vis:false}},
-  {{color:'#ff6d00',width:1,  label:'120MA',data:D.m120,vis:false}},
-];
-const seriesMap = {{}};
-maList.forEach(m => {{
-  const s = chart.addLineSeries({{
-    color:m.color, lineWidth:m.width, priceFormat:{{type:'price',precision:0,minMove:1}},
-    lastValueVisible:m.vis, priceLineVisible:false, visible:m.vis, title:m.label,
-  }});
-  s.setData(m.data);
-  seriesMap[m.label] = s;
-}});
-const predSeries = chart.addLineSeries({{
-  color:'#f9a825', lineWidth:2, lineStyle:1,
-  priceFormat:{{type:'price',precision:0,minMove:1}},
-  lastValueVisible:true, priceLineVisible:false, title:`AI예측(${{D.pred_days}}일)`,
-}});
-predSeries.setData(D.pred_line);
-const upperSeries = chart.addLineSeries({{
-  color:'#a55eea', lineWidth:1, lineStyle:2,
-  priceFormat:{{type:'price',precision:0,minMove:1}},
-  lastValueVisible:true, priceLineVisible:false, title:'예측상단',
-}});
-upperSeries.setData(D.pred_upper);
-const lowerSeries = chart.addLineSeries({{
-  color:'#00cec9', lineWidth:1, lineStyle:2,
-  priceFormat:{{type:'price',precision:0,minMove:1}},
-  lastValueVisible:true, priceLineVisible:false, title:'예측하단',
-}});
-lowerSeries.setData(D.pred_lower);
-chart.subscribeCrosshairMove((param) => {{
-  const info = document.getElementById('hover-info');
-  if (param.time && param.seriesData) {{
-    const d = param.seriesData.get(candle);
-    const v = param.seriesData.get(volSeries);
-    if (d) {{
-      const vol = v && v.value ? v.value.toLocaleString('ko-KR') : '-';
-      info.innerHTML = `시가:<span style="color:#e2e8f0">${{d.open.toLocaleString('ko-KR')}}</span> 고가:<span style="color:#e2e8f0">${{d.high.toLocaleString('ko-KR')}}</span> 저가:<span style="color:#e2e8f0">${{d.low.toLocaleString('ko-KR')}}</span> 종가:<span style="color:#e2e8f0">${{d.close.toLocaleString('ko-KR')}}</span> <span style="margin-left:8px">거래량:<span style="color:#e2e8f0">${{vol}}</span></span>`;
-    }}
-  }} else {{ info.innerHTML=''; }}
-}});
-const legend = document.getElementById('legend');
-const legItems = [
-  ...maList.map(m=>({{label:m.label,color:m.color,vis:m.vis}})),
-  {{label:'AI예측',color:'#f9a825',vis:true}},
-  {{label:'예측상단',color:'#a55eea',vis:true}},
-  {{label:'예측하단',color:'#00cec9',vis:true}},
-];
-legItems.forEach(item => {{
-  const el = document.createElement('span');
-  el.className = 'leg-item' + (item.vis ? '' : ' hidden');
-  el.style.color = item.color;
-  el.style.borderColor = item.color + '66';
-  el.textContent = '━ ' + item.label;
-  el.onclick = () => {{
-    const isHidden = el.classList.toggle('hidden');
-    const show = !isHidden;
-    if (item.label==='AI예측') predSeries.applyOptions({{visible:show,lastValueVisible:show,priceLineVisible:false}});
-    else if (item.label==='예측상단') upperSeries.applyOptions({{visible:show,lastValueVisible:show,priceLineVisible:false}});
-    else if (item.label==='예측하단') lowerSeries.applyOptions({{visible:show,lastValueVisible:show,priceLineVisible:false}});
-    else if (seriesMap[item.label]) seriesMap[item.label].applyOptions({{visible:show,lastValueVisible:show,priceLineVisible:false}});
-  }};
-  legend.appendChild(el);
-}});
-new ResizeObserver(() => {{
-  chart.applyOptions({{width:document.getElementById('chart-container').clientWidth}});
-}}).observe(document.getElementById('chart-container'));
-if (D.zoom_from) {{
-  const last_dt = D.pred_line.length>0 ? D.pred_line[D.pred_line.length-1].time : D.cdl[D.cdl.length-1].time;
-  chart.timeScale().setVisibleRange({{from:D.zoom_from, to:last_dt}});
-}}
-</script>
-</body>
-</html>
-""", height=430, scrolling=False)
-
-
-        # ─────────────────────────────────────────────
-        # 하단: AI 브리핑 + 뉴스
-        # ─────────────────────────────────────────────
-        st.markdown('<div class="bottom-wrap"><div class="bottom-left">', unsafe_allow_html=True)
-
-        st.markdown('<div class="section-header">💡 AI Analyst Briefing — 시황·섹터·종목 종합</div>', unsafe_allow_html=True)
-
-        _cached_ai  = st.session_state.get("cached_ai_html")
-        _cached_src = st.session_state.get("cached_ai_src")
-
-        if _cached_ai is not None:
-            st.markdown(f'<div class="ai-box">{_cached_ai}{_cached_src}</div>', unsafe_allow_html=True)
-
-        elif "GEMINI_API_KEY" in st.secrets:
-            # ── Gemini 호출 ──
-            _ai_error   = ""
-            _res_json   = None
-            _used_model = "gemini-2.5-flash-lite"
-            _used_search = False
-
-            try:
-                with st.spinner("📡 AI가 최신 뉴스를 검색하며 분석 중..."):
-                    gemini_key = str(st.secrets["GEMINI_API_KEY"]).strip()
-                    today_str  = now_kst().strftime("%Y년 %m월 %d일")
-
-                    daily_pred = "\n".join(
-                        f"  {r['ds'].strftime('%m/%d')} : 예측 {int(r['yhat']):,}원 "
-                        f"(범위 {int(r['yhat_lower']):,}~{int(r['yhat_upper']):,})"
-                        for _, r in fc_future.iterrows()
-                    )
-                    sent_label = (f"긍정적 ({sentiment_score:+.2f})" if sentiment_score > 0.2
-                                  else f"부정적 ({sentiment_score:+.2f})" if sentiment_score < -0.2
-                                  else f"중립 ({sentiment_score:+.2f})")
-                    naver_section = ""
-                    if news_raw:
-                        titles = "\n".join(f"  - {n['title']}" for n in news_raw[:5])
-                        naver_section = f"\n[네이버 수집 뉴스]\n{titles}"
-
-                    # 프롬프트 정의 바로 윗줄에 이 코드를 추가하여 검색 시점을 동적으로 만듭니다.
-                        current_ym = now_kst().strftime("%Y년 %m월") # 예: 시간이 지나면 '2026년 4월', '2026년 5월'로 자동 변경됨
-
-                        prompt = f"""당신은 피도 눈물도 없는 여의도 탑티어 프랍 트레이더입니다. 
-당신의 분석 하나에 누군가의 전 재산과 목숨이 걸려있습니다. 
-오늘 날짜는 정확히 [{today_str}]입니다.
-
-[냉혹한 팩트 데이터]
-- 종목: {display_name} ({ticker}) | 현재가: {int(cp):,}원 ({pct:+.2f}%)
-- 52주 고/저: {int(high52):,} / {int(low52):,} 
-- 거래량 흐름: 20일 평균({avg_vol:,}) 대비 오늘 거래량
-- 기술적 상태: RSI {cur_rsi}({rsi_signal}) | MACD {macd_signal} | BB %B {cur_bb}%
-- Prophet 단기 추세({pred_days}일): {pred_end:,}원 (상단 {pred_upper:,} / 하단 {pred_lower:,})
-{naver_section}
-
-[Google 검색 명령 - ⚠️ 탑다운(Top-Down) & 바텀업(Bottom-Up) 입체 스캔]
-1. 매크로 & 정책: "{today_str} 미증시 시황", "최근 한국 {display_name} 관련 산업 정부 정책 규제 원자재 가격 동향" (예: 유가 상승과 정부 가격 상한제 충돌 등 정책 리스크 확인)
-2. 개별 종목: "{display_name} 최신 뉴스", "{today_str} {display_name} 공시 기술이전 수주 실적 계약"
-* 주의
-1. 구글 검색 시 '악재'나 '급락'이라는 단어에 얽매이지 마시오. 
-2. 호재성 제목("기술이전", "수주")의 기사라도 그것이 시장의 기대치에 못 미쳐서(재료 소멸) 주가 폭락의 원인이 될 수 있음을 명심하고, 오늘 발생한 모든 이슈를 철저히 스캔하시오.
-
-[작성 원칙 - ⚠️ 목숨 걸고 지킬 것]
-1. 표면적인 개별 뉴스만 보지 말고, 해당 기업의 이익을 훼손하거나 증대시키는 '정부 정책/규제' 및 '원자재/환율 흐름'과의 상관관계를 반드시 짚어낼 것.
-2. 개미를 꼬드기는 희망 고문, 모호한 표현(~우려, ~전망) 금지. 철저히 팩트 기반으로 작성.
-3. 개조식(~함, ~임, ~판단됨)으로 극도로 짧고 날카롭게 작성할 것.
-
-[출력 템플릿 - 토씨 하나 틀리지 말고 이 양식대로 출력]
-(주의: 응답의 가장 첫 글자는 반드시 '🌍' 기호로 시작할 것. 앞에 빈 줄이나 공백, 인사말을 넣으면 즉시 폐기함)
-🌍 0. 거시 환경 & 산업 규제 (Macro & Policy)
-- 전체 투심: (미 증시 및 국내 KOSPI/KOSDAQ 수급 1줄 요약)
-- 산업/정책 변수: (해당 기업에 직결되는 핵심 원자재 가격 흐름이나 정부 규제/정책 리스크가 주가를 어떻게 누르고/끌어올리고 있는지 날카롭게 1줄 요약)
-
-🔥 1. 팩트 폭격: 주가 변동의 진짜 이유
-- 핵심 트리거: (반드시 {today_str} 기준 최근 2주 이내의 날짜와 팩트만 기재. 없으면 '최근 이슈 없음' 기재)
-- 재료의 성격: (단발성 노이즈 vs 구조적 펀더멘털/정책 변화)
-
-🩸 2. 차트와 알고리즘의 이면 (세력의 의도)
-- 지표 진단: (RSI/MACD/거래량을 종합하여 현재 구간이 매집인지 설거지인지 확정적 어조로 판단)
-- Prophet 괴리: (예측가 {pred_end:,}원과 기술적 지표 간의 모순/일치점 1줄)
-
-🎯 3. 피도 눈물도 없는 실전 매매 타점
-- 투자의견: [풀매수 / 분할매수 / 관망 / 비중축소 / 전량매도] 중 택 1
-- 진입 및 목표가: (저항/지지 기반 구체적 '원' 단위 타점)
-- 목숨줄(손절선): (절대 깨지면 안 되는 마지노선 가격)
-- 트레이더 코멘트: (시황, 정책 변수, 개별 재료를 엮은 가장 현실적인 액션 플랜 1줄)
-"""                       
-
-
-                    base_url = "https://generativelanguage.googleapis.com/v1beta/models"
-                    url = f"{base_url}/{_used_model}:generateContent?key={gemini_key}"
-
-                    # 1차: Google Search Grounding 포함
-                    res = requests.post(url, json={
-                        "contents": [{"parts": [{"text": prompt}]}],
-                        "tools": [{"googleSearch": {}}]
-                    }, timeout=60)
-
-                    if res.status_code == 200:
-                        rj = res.json()
-                        if "candidates" in rj:
-                            _res_json    = rj
-                            _used_search = True
-                    elif res.status_code == 429:
-                        _ai_error = "1분 호출 한도 초과. 잠시 후 다시 시도해주세요."
-                    else:
-                        # 2차: 검색 없이 재시도
-                        res2 = requests.post(url, json={
-                            "contents": [{"parts": [{"text": prompt}]}]
-                        }, timeout=60)
-                        if res2.status_code == 200:
-                            rj2 = res2.json()
-                            if "candidates" in rj2:
-                                _res_json = rj2
-                        elif res2.status_code == 429:
-                            _ai_error = "1분 호출 한도 초과. 잠시 후 다시 시도해주세요."
-                        else:
-                            _ai_error = f"HTTP {res2.status_code}: {res2.text[:100]}"
-
-            except requests.exceptions.Timeout:
-                _ai_error = "API 응답 시간 초과"
-            except Exception as e:
-                _ai_error = str(e)
-
-            # ── spinner 밖에서 캐시 저장 & 렌더 ──
-            if _res_json and "candidates" in _res_json:
-                import re as _re
-                parts   = _res_json["candidates"][0]["content"].get("parts", [])
-                ai_text = "".join(p.get("text", "") for p in parts if "text" in p).strip()
-                # Gemini이 삽입하는 불필요한 텍스트 제거
-                ai_html = _re.sub(r'```json\s*\[.*?\]\s*```', '', ai_text, flags=_re.DOTALL)
-                ai_html = _re.sub(r'```python\s*.*?```', '', ai_html, flags=_re.DOTALL)
-                ai_html = _re.sub(r'```.*?```', '', ai_html, flags=_re.DOTALL)
-                ai_html = _re.sub(r'\[\s*\{\s*"query".*?\}\s*\]', '', ai_html, flags=_re.DOTALL)
-                ai_html = _re.sub(r'print\s*\(.*?\)\s*', '', ai_html, flags=_re.DOTALL)
-                ai_html = _re.sub(r'google_search\.\w+\(.*?\)', '', ai_html, flags=_re.DOTALL)
-                ai_html = _re.sub(r'(?i)disclaimer.*?(?=\n\n|🌍)', '', ai_html, flags=_re.DOTALL)
-                ai_html = _re.sub(r'(?i)I am an AI.*?(?=\n\n|🌍)', '', ai_html, flags=_re.DOTALL)
-                ai_html = _re.sub(r'(?i)(?:Note|Warning|Caution)\s*:?\s*(?:I am|This is|The following).*?(?=\n\n|🌍)', '', ai_html, flags=_re.DOTALL)
-                # 🌍 이전의 모든 텍스트 제거 (프롬프트에서 🌍로 시작하도록 지시함)
-                _globe_idx = ai_html.find('🌍')
-                if _globe_idx > 0:
-                    ai_html = ai_html[_globe_idx:]
-                # 🌍가 없으면 Gemini가 제대로 응답하지 않은 것 → 폴백
-                if '🌍' not in ai_html:
-                    ai_html = ""
-                ai_html = _re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', ai_html)
-                ai_html = _re.sub(r'<(tool_code|function_call|tool_result|code_execution)[^>]*>.*?</\1>', '', ai_html, flags=_re.DOTALL)
-                ai_html = ai_html.replace("\n", "<br>")                
-                if ai_html.strip():
-                    src_label = "🔍 Google 검색 포함" if _used_search else ("📰 네이버 뉴스 기반" if news_txt else "📊 Prophet 데이터만")
-                    source_tag = f'<div style="font-size:0.68rem;color:#4a5568;margin-top:8px">🤖 {_used_model} · {src_label}</div>'
-                    st.session_state["cached_ai_html"] = ai_html
-                    st.session_state["cached_ai_src"]  = source_tag
-                    st.markdown(f'<div class="ai-box">{ai_html}{source_tag}</div>', unsafe_allow_html=True)
-                else:
-                    # Gemini가 코드만 출력하고 분석을 안 한 경우 → 폴백
-                    st.session_state["cached_ai_html"] = None
-                    st.session_state["cached_ai_src"]  = None
-                    _show_fallback_briefing(display_name, cp, pred_days, pred_end, pred_pct, pred_lower, pred_upper)
             else:
-                # 에러 시 캐시에 저장 → 재호출 방지
-                err_msg = _ai_error or "알 수 없는 오류"
-                st.session_state["cached_ai_html"] = f'<span style="color:#fc5c5c">⚠️ {err_msg}</span>'
-                st.session_state["cached_ai_src"]  = ""
-                st.warning(f"⚠️ Gemini API 오류: {err_msg}")
-                _show_fallback_briefing(display_name, cp, pred_days, pred_end, pred_pct, pred_lower, pred_upper)
+                df          = st.session_state["cached_df"]
+                news_raw    = st.session_state["cached_news_raw"]
+                news_status = st.session_state["cached_news_status"]
+                news_txt    = " ".join([n["title"] for n in news_raw])
 
-        else:
-            st.info("💡 Streamlit Secrets에 `GEMINI_API_KEY`를 등록하면 AI 브리핑이 활성화됩니다.")
-            _show_fallback_briefing(display_name, cp, pred_days, pred_end, pred_pct, pred_lower, pred_upper)
+            if df.empty:
+                st.error("⚠️ 데이터를 불러올 수 없습니다. 티커를 확인해 주세요.")
+                st.stop()
 
-        st.markdown('</div><div class="bottom-right">', unsafe_allow_html=True)
+            df.loc[df["Open"] <= 0, "Open"] = df["Close"]
+            df.loc[df["High"] <= 0, "High"] = df["Close"]
+            df.loc[df["Low"]  <= 0, "Low"]  = df["Close"]
 
-        st.markdown('<div class="section-header">📰 네이버 뉴스</div>', unsafe_allow_html=True)
+            df["Date"] = pd.to_datetime(df["Date"]).dt.tz_localize(None)
+            df["time"] = df["Date"].dt.strftime("%Y-%m-%d")
+            df["MA3"]   = df["Close"].rolling(3).mean()
+            df["MA5"]   = df["Close"].rolling(5).mean()
+            df["MA10"]  = df["Close"].rolling(10).mean()
+            df["MA20"]  = df["Close"].rolling(20).mean()
+            df["MA60"]  = df["Close"].rolling(60).mean()
+            df["MA120"] = df["Close"].rolling(120).mean()
 
-        if news_status == "ok" and news_raw:
-            for n in news_raw:
-                title = n.get("title","").strip()
-                link  = n.get("link","#")
-                pub   = n.get("pub","")
-                if not title: continue
-                st.markdown(
-                    f'<div class="news-card">'
-                    f'<span style="color:#4a5568;font-size:0.68rem">{pub}&nbsp;&nbsp;</span>'
-                    f'<a href="{link}" target="_blank" style="color:#a0aec0;text-decoration:none;line-height:1.6">{title}</a>'
-                    f'</div>',
-                    unsafe_allow_html=True
+            cp      = df.iloc[-1]["Close"]
+            pp      = df.iloc[-2]["Close"]
+            diff    = cp - pp
+            pct     = (diff / pp) * 100
+            high52  = df["High"].max()
+            low52   = df["Low"].min()
+            avg_vol = int(df["Volume"].tail(20).mean())
+
+            # ─────────────────────────────────────────────
+            # Prophet + GBR 앙상블 예측 (날짜 기반 캐시 → 일관성 보장)
+            # ─────────────────────────────────────────────
+            # 장중 당일 데이터 보완 (차트/메트릭용 df에만 적용)
+            try:
+                from pykrx import stock as _krx
+                _today_str_krx = now_kst().strftime("%Y%m%d")
+                _today_ohlcv = _krx.get_market_ohlcv_by_date(_today_str_krx, _today_str_krx, stock_code)
+                if _today_ohlcv is not None and len(_today_ohlcv) > 0:
+                    _tr = _today_ohlcv.iloc[-1]
+                    _today_date = pd.Timestamp(_today_ohlcv.index[-1])
+                    if _today_date.tz is not None:
+                        _today_date = _today_date.tz_localize(None)
+                    _last_date_check = pd.to_datetime(df["Date"]).dt.tz_localize(None).max()
+                    if _today_date > _last_date_check and float(_tr["종가"]) > 0:
+                        _new = pd.DataFrame([{
+                            "Date": _today_date,
+                            "Open": float(_tr["시가"]), "High": float(_tr["고가"]),
+                            "Low": float(_tr["저가"]), "Close": float(_tr["종가"]),
+                            "Volume": float(_tr["거래량"]),
+                        }])
+                        df = pd.concat([df, _new], ignore_index=True)
+            except Exception:
+                pass
+
+            with st.spinner("🤖 기술지표 계산 및 AI 예측 모델 실행 중..."):
+                _pred_date_key = now_kst().strftime("%Y%m%d")
+                _last_date_str = df["Date"].max().strftime("%Y%m%d")
+                _pred_result = compute_prediction(
+                    stock_code, _pred_date_key, pred_days,
+                    _last_date_str,
+                    json.dumps(news_raw, ensure_ascii=False),
                 )
-        elif news_status == "no_key":
-            st.markdown("""
-            <div class="news-card">
-                <div style="color:#f9a825;font-size:0.8rem;font-weight:600;margin-bottom:6px">🔑 Naver API 키 미등록</div>
-                <div style="color:#718096;font-size:0.78rem;line-height:1.7">
-                    ① <a href="https://developers.naver.com/apps/#/register" target="_blank" style="color:#4d9fff">developers.naver.com</a> 접속<br>
-                    ② 애플리케이션 등록 → <b>검색 API</b> 선택<br>
-                    ③ Client ID / Secret 복사<br>
-                    ④ Streamlit Secrets에 추가:
+
+            # 예측 결과 복원
+            fc_future = pd.DataFrame(_pred_result["fc_future"])
+            fc_future["ds"] = pd.to_datetime(fc_future["ds"])
+            sentiment_score = _pred_result["sentiment_score"]
+            backtest_mape = _pred_result["backtest_mape"]
+
+            # 예측 함수에서 계산된 지표를 df에 반영 (차트용)
+            _df_ind = pd.DataFrame(_pred_result["df_with_indicators"])
+            _ind_cols = ["RSI", "MACD_hist", "BB_pct", "OBV_norm", "vol_ratio", "ma20_dist", "sentiment"]
+            if len(df) == len(_df_ind):
+                for _ind_col in _ind_cols:
+                    if _ind_col in _df_ind.columns:
+                        df[_ind_col] = _df_ind[_ind_col].values
+            else:
+                # df가 장중 보완으로 1행 더 길 경우, 마지막 행은 이전값으로 채움
+                for _ind_col in _ind_cols:
+                    if _ind_col in _df_ind.columns:
+                        _vals = list(_df_ind[_ind_col].values)
+                        while len(_vals) < len(df):
+                            _vals.append(_vals[-1] if _vals else 0)
+                        df[_ind_col] = _vals[:len(df)]
+
+            pred_end    = krx_tick(fc_future.iloc[-1]["yhat"])
+            pred_upper  = krx_tick(fc_future.iloc[-1]["yhat_upper"])
+            pred_lower  = krx_tick(fc_future.iloc[-1]["yhat_lower"])
+            pred_change = pred_end - int(cp)
+            pred_pct    = (pred_change / cp) * 100
+
+            cur_rsi     = round(float(df["RSI"].iloc[-1]), 1)
+            cur_macd    = round(float(df["MACD_hist"].iloc[-1]), 2)
+            cur_bb      = round(float(df["BB_pct"].iloc[-1]) * 100, 1)
+            rsi_signal  = "과매수" if cur_rsi > 70 else ("과매도" if cur_rsi < 30 else "중립")
+            macd_signal = "상승" if cur_macd > 0 else "하락"
+            bb_signal   = "상단돌파" if cur_bb > 80 else ("하단이탈" if cur_bb < 20 else "중립")
+
+            # ─────────────────────────────────────────────
+            # 상단 메트릭
+            # ─────────────────────────────────────────────
+            color_cls  = "metric-up" if diff >= 0 else "metric-down"
+            arrow      = "▲" if diff >= 0 else "▼"
+            pred_color = "metric-up" if pred_change >= 0 else "metric-down"
+            pred_arrow = "▲" if pred_change >= 0 else "▼"
+            rsi_color  = "#fc5c5c" if cur_rsi > 70 else ("#4d9fff" if cur_rsi < 30 else "#a0aec0")
+
+            st.markdown(f"""
+            <div class="metrics-grid">
+                <div class="metric-card">
+                    <div class="metric-label">현재가</div>
+                    <div class="metric-value">{int(cp):,}<span class="unit">원</span></div>
+                    <div class="{color_cls} metric-sub">{arrow} {abs(int(diff)):,}원 ({pct:+.2f}%)</div>
                 </div>
-                <div style="background:#0d1117;border-radius:6px;padding:8px 10px;margin-top:8px;font-family:'JetBrains Mono',monospace;font-size:0.72rem;color:#79c0ff;line-height:1.8">
-                    NAVER_CLIENT_ID = "여기에_ID"<br>
-                    NAVER_CLIENT_SECRET = "여기에_SECRET"
+                <div class="metric-card">
+                    <div class="metric-label">내일 예측가 (앙상블)</div>
+                    <div class="metric-value {pred_color}">{pred_end:,}<span class="unit">원</span></div>
+                    <div class="{pred_color} metric-sub">{pred_arrow} {abs(pred_change):,}원 ({pred_pct:+.2f}%)</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">예측 범위</div>
+                    <div class="metric-value" style="font-size:0.9rem"><span style="color:#00cec9">{pred_lower:,}</span> ~ <span style="color:#a55eea">{pred_upper:,}</span></div>
+                    <div class="metric-sub" style="color:#4a5568">신뢰 구간 (하한~상한)</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">예측 오차율</div>
+                    <div class="metric-value" style="font-size:0.95rem;color:{'#4dc98f' if backtest_mape is not None and backtest_mape < 3 else '#f9a825' if backtest_mape is not None and backtest_mape < 5 else '#fc5c5c' if backtest_mape is not None else '#4a5568'}">{f'{backtest_mape:.1f}%' if backtest_mape is not None else '-'}</div>
+                    <div class="metric-sub" style="color:#4a5568">{'MAPE 10일 백테스트' if backtest_mape is not None else '데이터 부족'}</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">기술지표</div>
+                    <div class="metric-value" style="font-size:0.9rem;line-height:1.5">
+                        <span style="color:{rsi_color}">RSI {cur_rsi}</span>
+                        <span style="color:#4a5568"> · </span>
+                        <span style="color:{'#fc5c5c' if cur_macd>0 else '#4d9fff'}">MACD {'▲' if cur_macd>0 else '▼'}</span>
+                        <span style="color:#4a5568"> · </span>
+                        <span style="color:#a0aec0">BB {cur_bb}%</span>
+                    </div>
+                    <div class="metric-sub" style="color:#4a5568">{rsi_signal} · MACD {macd_signal} · {bb_signal}</div>
                 </div>
             </div>
             """, unsafe_allow_html=True)
-        elif news_status.startswith("empty:"):
-            st.markdown(f'<div class="news-card" style="color:#a0aec0;font-size:0.8rem">🔍 검색 결과 없음</div>', unsafe_allow_html=True)
-        elif news_status.startswith("api_error"):
-            st.markdown(f'<div class="news-card" style="color:#fc5c5c;font-size:0.8rem">⚠️ {news_status.replace("api_error:","")}</div>', unsafe_allow_html=True)
 
-        st.markdown('</div></div>', unsafe_allow_html=True)
-        st.markdown('<div style="height:2rem"></div>', unsafe_allow_html=True)
+            # ─────────────────────────────────────────────
+            # 실시간 현재가 + NXT 배너
+            # ─────────────────────────────────────────────
+            if _is_market_open:
+                # 정규장 실시간 (09:00~15:30)
+                _rt = fetch_realtime_price(stock_code) if (900 <= _hm <= 1530) else None
+                if _rt and _rt["price"] > 0:
+                    _rt_color = "#fc5c5c" if _rt["change"] >= 0 else "#4d9fff"
+                    _rt_arrow = "▲" if _rt["change"] >= 0 else "▼"
+                    _rt_time = _rt["time"][-8:] if len(_rt["time"]) > 8 else _rt["time"]
+                    st.markdown(
+                        f'<div style="background:linear-gradient(90deg,#131929 0%,#0f1a2e 100%);'
+                        f'border:1px solid #1e3a5f;border-radius:6px;padding:8px 14px;'
+                        f'margin-bottom:0.5rem;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">'
+                        f'<div style="display:flex;align-items:center;gap:12px">'
+                        f'<span style="font-size:0.6rem;color:#4dc98f;font-weight:600;letter-spacing:1px">LIVE</span>'
+                        f'<span style="font-family:JetBrains Mono,monospace;font-size:1.15rem;font-weight:700;color:#e2e8f0">'
+                        f'{_rt["price"]:,}<span style="font-size:0.75rem;color:#4a5568">원</span></span>'
+                        f'<span style="font-size:0.85rem;color:{_rt_color}">'
+                        f'{_rt_arrow} {abs(_rt["change"]):,}원 ({_rt["change_pct"]:+.2f}%)</span>'
+                        f'</div>'
+                        f'<div style="display:flex;gap:14px;font-size:0.7rem;color:#4a5568">'
+                        f'<span>시가 {_rt["open"]:,}</span>'
+                        f'<span>고가 <span style="color:#fc5c5c">{_rt["high"]:,}</span></span>'
+                        f'<span>저가 <span style="color:#4d9fff">{_rt["low"]:,}</span></span>'
+                        f'<span>거래량 {_rt["volume"]:,}</span>'
+                        f'<span>{_rt_time}</span>'
+                        f'</div></div>',
+                        unsafe_allow_html=True
+                    )
 
-    except Exception as e:
-        st.error(f"오류가 발생했습니다: {e}")
-        st.exception(e)
+                # NXT 가격 (프리마켓 / 애프터마켓)
+                _nxt = fetch_nxt_price(stock_code)
+                if _nxt and _nxt["price"] > 0:
+                    _nxt_color = "#fc5c5c" if _nxt["change"] >= 0 else "#4d9fff"
+                    _nxt_arrow = "▲" if _nxt["change"] >= 0 else "▼"
+                    _nxt_session = "프리마켓" if _nxt["session"] == "PRE_MARKET" else "애프터마켓"
+                    _nxt_status_dot = "🟢" if _nxt["status"] == "OPEN" else "⚫"
+                    _nxt_time = _nxt["time"][-14:-6] if len(_nxt["time"]) > 14 else _nxt["time"]
+                    st.markdown(
+                        f'<div style="background:linear-gradient(90deg,#1a1a0e 0%,#1a1508 100%);'
+                        f'border:1px solid #3d3a1e;border-radius:6px;padding:6px 14px;'
+                        f'margin-bottom:0.5rem;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">'
+                        f'<div style="display:flex;align-items:center;gap:12px">'
+                        f'<span style="font-size:0.6rem;color:#f9a825;font-weight:600;letter-spacing:1px">{_nxt_status_dot} NXT {_nxt_session}</span>'
+                        f'<span style="font-family:JetBrains Mono,monospace;font-size:1.05rem;font-weight:700;color:#e2e8f0">'
+                        f'{_nxt["price"]:,}<span style="font-size:0.75rem;color:#4a5568">원</span></span>'
+                        f'<span style="font-size:0.8rem;color:{_nxt_color}">'
+                        f'{_nxt_arrow} {abs(_nxt["change"]):,}원 ({_nxt["change_pct"]:+.2f}%)</span>'
+                        f'</div>'
+                        f'<div style="font-size:0.68rem;color:#4a5568">{_nxt_time}</div>'
+                        f'</div>',
+                        unsafe_allow_html=True
+                    )
+            else:
+                # 장 마감 후에도 NXT 종가 표시
+                _nxt = fetch_nxt_price(stock_code)
+                if _nxt and _nxt["price"] > 0:
+                    _nxt_color = "#fc5c5c" if _nxt["change"] >= 0 else "#4d9fff"
+                    _nxt_arrow = "▲" if _nxt["change"] >= 0 else "▼"
+                    _nxt_session = "프리마켓" if _nxt["session"] == "PRE_MARKET" else "애프터마켓"
+                    _nxt_time = _nxt["time"][-14:-6] if len(_nxt["time"]) > 14 else _nxt["time"]
+                    st.markdown(
+                        f'<div style="background:linear-gradient(90deg,#1a1a0e 0%,#1a1508 100%);'
+                        f'border:1px solid #3d3a1e;border-radius:6px;padding:6px 14px;'
+                        f'margin-bottom:0.5rem;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">'
+                        f'<div style="display:flex;align-items:center;gap:12px">'
+                        f'<span style="font-size:0.6rem;color:#f9a825;font-weight:600;letter-spacing:1px">NXT {_nxt_session} (마감)</span>'
+                        f'<span style="font-family:JetBrains Mono,monospace;font-size:1.05rem;font-weight:700;color:#e2e8f0">'
+                        f'{_nxt["price"]:,}<span style="font-size:0.75rem;color:#4a5568">원</span></span>'
+                        f'<span style="font-size:0.8rem;color:{_nxt_color}">'
+                        f'{_nxt_arrow} {abs(_nxt["change"]):,}원 ({_nxt["change_pct"]:+.2f}%)</span>'
+                        f'</div>'
+                        f'<div style="font-size:0.68rem;color:#4a5568">{_nxt_time}</div>'
+                        f'</div>',
+                        unsafe_allow_html=True
+                    )
+
+            # ─────────────────────────────────────────────
+            # 차트
+            # ─────────────────────────────────────────────
+            st.markdown('<div class="section-header">📊 프로 차트 — TradingView Engine</div>', unsafe_allow_html=True)
+
+            cdl, m3, m5, m10, m20, m60, m120, vol = [], [], [], [], [], [], [], []
+            df_chart = df.dropna(subset=["Open","High","Low","Close","Volume"]).copy()
+
+            for _, r in df_chart.iterrows():
+                tm = r["time"]
+                o, h, l, c = float(r["Open"]), float(r["High"]), float(r["Low"]), float(r["Close"])
+                if any(v != v or abs(v) == float("inf") for v in [o, h, l, c]):
+                    continue
+                cdl.append({"time":tm,"open":krx_tick(o),"high":krx_tick(h),"low":krx_tick(l),"close":krx_tick(c)})
+                if pd.notna(r["MA3"]):   m3.append({"time":tm,"value":int(krx_tick(float(r["MA3"])))})
+                if pd.notna(r["MA5"]):   m5.append({"time":tm,"value":int(krx_tick(float(r["MA5"])))})
+                if pd.notna(r["MA10"]):  m10.append({"time":tm,"value":int(krx_tick(float(r["MA10"])))})
+                if pd.notna(r["MA20"]):  m20.append({"time":tm,"value":int(krx_tick(float(r["MA20"])))})
+                if pd.notna(r["MA60"]):  m60.append({"time":tm,"value":int(krx_tick(float(r["MA60"])))})
+                if pd.notna(r["MA120"]): m120.append({"time":tm,"value":int(krx_tick(float(r["MA120"])))})
+                vol_val = float(r["Volume"])
+                if vol_val == vol_val:
+                    vc = "rgba(252,92,92,0.55)" if c >= o else "rgba(77,159,255,0.55)"
+                    vol.append({"time":tm,"value":int(vol_val),"color":vc})
+
+            pred_line = [{"time":df.iloc[-1]["time"],"value":krx_tick(float(cp))}]
+            for _, r in fc_future.iterrows():
+                pred_line.append({"time":r["ds"].strftime("%Y-%m-%d"),"value":krx_tick(r["yhat"])})
+
+            pred_upper_line = [{"time":df.iloc[-1]["time"],"value":krx_tick(float(cp))}]
+            pred_lower_line = [{"time":df.iloc[-1]["time"],"value":krx_tick(float(cp))}]
+            for _, r in fc_future.iterrows():
+                td = r["ds"].strftime("%Y-%m-%d")
+                pred_upper_line.append({"time":td,"value":krx_tick(r["yhat_upper"])})
+                pred_lower_line.append({"time":td,"value":krx_tick(r["yhat_lower"])})
+
+            total_bars = len(cdl)
+            zoom_from  = cdl[max(0, total_bars-60)]["time"] if cdl else None
+
+            import streamlit.components.v1 as components
+            import json as _json
+
+            _chart_data = _json.dumps({
+                "cdl":cdl,"vol":vol,
+                "m3":m3,"m5":m5,"m10":m10,"m20":m20,"m60":m60,"m120":m120,
+                "pred_line":pred_line,"pred_upper":pred_upper_line,"pred_lower":pred_lower_line,
+                "pred_days":pred_days,"zoom_from":zoom_from,"cp":int(cp),
+            })
+
+            components.html(f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+    <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+    <style>
+      body {{ margin:0; background:#0b0e17; overflow:hidden; }}
+      #chart-container {{ position:relative; width:100%; height:380px; }}
+      #legend {{ display:flex; flex-wrap:wrap; gap:6px; padding:4px 2px; font-family:'JetBrains Mono',monospace; }}
+      .leg-item {{ font-size:0.62rem; cursor:pointer; padding:2px 6px; border-radius:3px; border:1px solid #2d3a55; user-select:none; transition:opacity 0.2s; }}
+      .leg-item.hidden {{ opacity:0.3; text-decoration:line-through; }}
+      #hover-info {{ position:absolute; top:10px; left:10px; z-index:10; font-family:'JetBrains Mono',monospace; font-size:0.75rem; color:#a0aec0; pointer-events:none; text-shadow:1px 1px 2px #0b0e17; }}
+    </style>
+    </head>
+    <body>
+    <div id="legend"></div>
+    <div id="chart-container">
+      <div id="hover-info"></div>
+      <div id="chart" style="width:100%;height:100%;"></div>
+    </div>
+    <script>
+    const D = {_chart_data};
+    const chart = LightweightCharts.createChart(document.getElementById('chart'), {{
+      layout:{{ background:{{type:'Solid',color:'#0b0e17'}}, textColor:'#a0aec0' }},
+      grid:{{ vertLines:{{color:'#1a2030'}}, horzLines:{{color:'#1a2030'}} }},
+      crosshair:{{ mode:1 }},
+      rightPriceScale:{{ borderColor:'#1e2435' }},
+      timeScale:{{ borderColor:'#1e2435', barSpacing:8, rightOffset:10 }},
+      localization:{{ priceFormatter: p => Math.round(p).toLocaleString('ko-KR') }},
+    }});
+    const candle = chart.addCandlestickSeries({{
+      upColor:'#fc5c5c', downColor:'#4d9fff', borderVisible:false,
+      wickUpColor:'#fc5c5c', wickDownColor:'#4d9fff',
+      priceFormat:{{type:'price',precision:0,minMove:1}},
+      lastValueVisible:false, priceLineVisible:false,
+    }});
+    candle.setData(D.cdl);
+    candle.createPriceLine({{ price:D.cp, color:'rgba(0,0,0,0)', lineWidth:0, lineStyle:2, axisLabelVisible:true, title:'현재가' }});
+    const volSeries = chart.addHistogramSeries({{
+      color:'rgba(120,120,120,0.5)', priceScaleId:'vol',
+      lastValueVisible:false, priceLineVisible:false,
+      priceFormat:{{type:'volume',precision:0,minMove:1}},
+    }});
+    chart.priceScale('vol').applyOptions({{ scaleMargins:{{top:0.85,bottom:0}}, borderVisible:false }});
+    volSeries.setData(D.vol);
+    const maList = [
+      {{color:'#ff6b9d',width:1,  label:'3MA',  data:D.m3,  vis:false}},
+      {{color:'#00e676',width:1,  label:'5MA',  data:D.m5,  vis:true}},
+      {{color:'#00bcd4',width:1,  label:'10MA', data:D.m10, vis:true}},
+      {{color:'#ffb300',width:1.5,label:'20MA', data:D.m20, vis:false}},
+      {{color:'#e040fb',width:1,  label:'60MA', data:D.m60, vis:false}},
+      {{color:'#ff6d00',width:1,  label:'120MA',data:D.m120,vis:false}},
+    ];
+    const seriesMap = {{}};
+    maList.forEach(m => {{
+      const s = chart.addLineSeries({{
+        color:m.color, lineWidth:m.width, priceFormat:{{type:'price',precision:0,minMove:1}},
+        lastValueVisible:m.vis, priceLineVisible:false, visible:m.vis, title:m.label,
+      }});
+      s.setData(m.data);
+      seriesMap[m.label] = s;
+    }});
+    const predSeries = chart.addLineSeries({{
+      color:'#f9a825', lineWidth:2, lineStyle:1,
+      priceFormat:{{type:'price',precision:0,minMove:1}},
+      lastValueVisible:true, priceLineVisible:false, title:`AI예측(${{D.pred_days}}일)`,
+    }});
+    predSeries.setData(D.pred_line);
+    const upperSeries = chart.addLineSeries({{
+      color:'#a55eea', lineWidth:1, lineStyle:2,
+      priceFormat:{{type:'price',precision:0,minMove:1}},
+      lastValueVisible:true, priceLineVisible:false, title:'예측상단',
+    }});
+    upperSeries.setData(D.pred_upper);
+    const lowerSeries = chart.addLineSeries({{
+      color:'#00cec9', lineWidth:1, lineStyle:2,
+      priceFormat:{{type:'price',precision:0,minMove:1}},
+      lastValueVisible:true, priceLineVisible:false, title:'예측하단',
+    }});
+    lowerSeries.setData(D.pred_lower);
+    chart.subscribeCrosshairMove((param) => {{
+      const info = document.getElementById('hover-info');
+      if (param.time && param.seriesData) {{
+        const d = param.seriesData.get(candle);
+        const v = param.seriesData.get(volSeries);
+        if (d) {{
+          const vol = v && v.value ? v.value.toLocaleString('ko-KR') : '-';
+          info.innerHTML = `시가:<span style="color:#e2e8f0">${{d.open.toLocaleString('ko-KR')}}</span> 고가:<span style="color:#e2e8f0">${{d.high.toLocaleString('ko-KR')}}</span> 저가:<span style="color:#e2e8f0">${{d.low.toLocaleString('ko-KR')}}</span> 종가:<span style="color:#e2e8f0">${{d.close.toLocaleString('ko-KR')}}</span> <span style="margin-left:8px">거래량:<span style="color:#e2e8f0">${{vol}}</span></span>`;
+        }}
+      }} else {{ info.innerHTML=''; }}
+    }});
+    const legend = document.getElementById('legend');
+    const legItems = [
+      ...maList.map(m=>({{label:m.label,color:m.color,vis:m.vis}})),
+      {{label:'AI예측',color:'#f9a825',vis:true}},
+      {{label:'예측상단',color:'#a55eea',vis:true}},
+      {{label:'예측하단',color:'#00cec9',vis:true}},
+    ];
+    legItems.forEach(item => {{
+      const el = document.createElement('span');
+      el.className = 'leg-item' + (item.vis ? '' : ' hidden');
+      el.style.color = item.color;
+      el.style.borderColor = item.color + '66';
+      el.textContent = '━ ' + item.label;
+      el.onclick = () => {{
+        const isHidden = el.classList.toggle('hidden');
+        const show = !isHidden;
+        if (item.label==='AI예측') predSeries.applyOptions({{visible:show,lastValueVisible:show,priceLineVisible:false}});
+        else if (item.label==='예측상단') upperSeries.applyOptions({{visible:show,lastValueVisible:show,priceLineVisible:false}});
+        else if (item.label==='예측하단') lowerSeries.applyOptions({{visible:show,lastValueVisible:show,priceLineVisible:false}});
+        else if (seriesMap[item.label]) seriesMap[item.label].applyOptions({{visible:show,lastValueVisible:show,priceLineVisible:false}});
+      }};
+      legend.appendChild(el);
+    }});
+    new ResizeObserver(() => {{
+      chart.applyOptions({{width:document.getElementById('chart-container').clientWidth}});
+    }}).observe(document.getElementById('chart-container'));
+    if (D.zoom_from) {{
+      const last_dt = D.pred_line.length>0 ? D.pred_line[D.pred_line.length-1].time : D.cdl[D.cdl.length-1].time;
+      chart.timeScale().setVisibleRange({{from:D.zoom_from, to:last_dt}});
+    }}
+    </script>
+    </body>
+    </html>
+    """, height=430, scrolling=False)
+
+
+            # ─────────────────────────────────────────────
+            # 하단: AI 브리핑 + 뉴스
+            # ─────────────────────────────────────────────
+            st.markdown('<div class="bottom-wrap"><div class="bottom-left">', unsafe_allow_html=True)
+
+            st.markdown('<div class="section-header">💡 AI Analyst Briefing — 시황·섹터·종목 종합</div>', unsafe_allow_html=True)
+
+            _cached_ai  = st.session_state.get("cached_ai_html")
+            _cached_src = st.session_state.get("cached_ai_src")
+
+            if _cached_ai is not None:
+                st.markdown(f'<div class="ai-box">{_cached_ai}{_cached_src}</div>', unsafe_allow_html=True)
+
+            elif "GEMINI_API_KEY" in st.secrets:
+                # ── Gemini 호출 ──
+                _ai_error   = ""
+                _res_json   = None
+                _used_model = "gemini-2.5-flash-lite"
+                _used_search = False
+
+                try:
+                    with st.spinner("📡 AI가 최신 뉴스를 검색하며 분석 중..."):
+                        gemini_key = str(st.secrets["GEMINI_API_KEY"]).strip()
+                        today_str  = now_kst().strftime("%Y년 %m월 %d일")
+
+                        daily_pred = "\n".join(
+                            f"  {r['ds'].strftime('%m/%d')} : 예측 {int(r['yhat']):,}원 "
+                            f"(범위 {int(r['yhat_lower']):,}~{int(r['yhat_upper']):,})"
+                            for _, r in fc_future.iterrows()
+                        )
+                        sent_label = (f"긍정적 ({sentiment_score:+.2f})" if sentiment_score > 0.2
+                                      else f"부정적 ({sentiment_score:+.2f})" if sentiment_score < -0.2
+                                      else f"중립 ({sentiment_score:+.2f})")
+                        naver_section = ""
+                        if news_raw:
+                            titles = "\n".join(f"  - {n['title']}" for n in news_raw[:5])
+                            naver_section = f"\n[네이버 수집 뉴스]\n{titles}"
+
+                        # 프롬프트 정의 바로 윗줄에 이 코드를 추가하여 검색 시점을 동적으로 만듭니다.
+                            current_ym = now_kst().strftime("%Y년 %m월") # 예: 시간이 지나면 '2026년 4월', '2026년 5월'로 자동 변경됨
+
+                            prompt = f"""당신은 피도 눈물도 없는 여의도 탑티어 프랍 트레이더입니다. 
+    당신의 분석 하나에 누군가의 전 재산과 목숨이 걸려있습니다. 
+    오늘 날짜는 정확히 [{today_str}]입니다.
+
+    [냉혹한 팩트 데이터]
+    - 종목: {display_name} ({ticker}) | 현재가: {int(cp):,}원 ({pct:+.2f}%)
+    - 52주 고/저: {int(high52):,} / {int(low52):,} 
+    - 거래량 흐름: 20일 평균({avg_vol:,}) 대비 오늘 거래량
+    - 기술적 상태: RSI {cur_rsi}({rsi_signal}) | MACD {macd_signal} | BB %B {cur_bb}%
+    - Prophet 단기 추세({pred_days}일): {pred_end:,}원 (상단 {pred_upper:,} / 하단 {pred_lower:,})
+    {naver_section}
+
+    [Google 검색 명령 - ⚠️ 탑다운(Top-Down) & 바텀업(Bottom-Up) 입체 스캔]
+    1. 매크로 & 정책: "{today_str} 미증시 시황", "최근 한국 {display_name} 관련 산업 정부 정책 규제 원자재 가격 동향" (예: 유가 상승과 정부 가격 상한제 충돌 등 정책 리스크 확인)
+    2. 개별 종목: "{display_name} 최신 뉴스", "{today_str} {display_name} 공시 기술이전 수주 실적 계약"
+    * 주의
+    1. 구글 검색 시 '악재'나 '급락'이라는 단어에 얽매이지 마시오. 
+    2. 호재성 제목("기술이전", "수주")의 기사라도 그것이 시장의 기대치에 못 미쳐서(재료 소멸) 주가 폭락의 원인이 될 수 있음을 명심하고, 오늘 발생한 모든 이슈를 철저히 스캔하시오.
+
+    [작성 원칙 - ⚠️ 목숨 걸고 지킬 것]
+    1. 표면적인 개별 뉴스만 보지 말고, 해당 기업의 이익을 훼손하거나 증대시키는 '정부 정책/규제' 및 '원자재/환율 흐름'과의 상관관계를 반드시 짚어낼 것.
+    2. 개미를 꼬드기는 희망 고문, 모호한 표현(~우려, ~전망) 금지. 철저히 팩트 기반으로 작성.
+    3. 개조식(~함, ~임, ~판단됨)으로 극도로 짧고 날카롭게 작성할 것.
+
+    [출력 템플릿 - 토씨 하나 틀리지 말고 이 양식대로 출력]
+    (주의: 응답의 가장 첫 글자는 반드시 '🌍' 기호로 시작할 것. 앞에 빈 줄이나 공백, 인사말을 넣으면 즉시 폐기함)
+    🌍 0. 거시 환경 & 산업 규제 (Macro & Policy)
+    - 전체 투심: (미 증시 및 국내 KOSPI/KOSDAQ 수급 1줄 요약)
+    - 산업/정책 변수: (해당 기업에 직결되는 핵심 원자재 가격 흐름이나 정부 규제/정책 리스크가 주가를 어떻게 누르고/끌어올리고 있는지 날카롭게 1줄 요약)
+
+    🔥 1. 팩트 폭격: 주가 변동의 진짜 이유
+    - 핵심 트리거: (반드시 {today_str} 기준 최근 2주 이내의 날짜와 팩트만 기재. 없으면 '최근 이슈 없음' 기재)
+    - 재료의 성격: (단발성 노이즈 vs 구조적 펀더멘털/정책 변화)
+
+    🩸 2. 차트와 알고리즘의 이면 (세력의 의도)
+    - 지표 진단: (RSI/MACD/거래량을 종합하여 현재 구간이 매집인지 설거지인지 확정적 어조로 판단)
+    - Prophet 괴리: (예측가 {pred_end:,}원과 기술적 지표 간의 모순/일치점 1줄)
+
+    🎯 3. 피도 눈물도 없는 실전 매매 타점
+    - 투자의견: [풀매수 / 분할매수 / 관망 / 비중축소 / 전량매도] 중 택 1
+    - 진입 및 목표가: (저항/지지 기반 구체적 '원' 단위 타점)
+    - 목숨줄(손절선): (절대 깨지면 안 되는 마지노선 가격)
+    - 트레이더 코멘트: (시황, 정책 변수, 개별 재료를 엮은 가장 현실적인 액션 플랜 1줄)
+    """                       
+
+
+                        base_url = "https://generativelanguage.googleapis.com/v1beta/models"
+                        url = f"{base_url}/{_used_model}:generateContent?key={gemini_key}"
+
+                        # 1차: Google Search Grounding 포함
+                        res = requests.post(url, json={
+                            "contents": [{"parts": [{"text": prompt}]}],
+                            "tools": [{"googleSearch": {}}]
+                        }, timeout=60)
+
+                        if res.status_code == 200:
+                            rj = res.json()
+                            if "candidates" in rj:
+                                _res_json    = rj
+                                _used_search = True
+                        elif res.status_code == 429:
+                            _ai_error = "1분 호출 한도 초과. 잠시 후 다시 시도해주세요."
+                        else:
+                            # 2차: 검색 없이 재시도
+                            res2 = requests.post(url, json={
+                                "contents": [{"parts": [{"text": prompt}]}]
+                            }, timeout=60)
+                            if res2.status_code == 200:
+                                rj2 = res2.json()
+                                if "candidates" in rj2:
+                                    _res_json = rj2
+                            elif res2.status_code == 429:
+                                _ai_error = "1분 호출 한도 초과. 잠시 후 다시 시도해주세요."
+                            else:
+                                _ai_error = f"HTTP {res2.status_code}: {res2.text[:100]}"
+
+                except requests.exceptions.Timeout:
+                    _ai_error = "API 응답 시간 초과"
+                except Exception as e:
+                    _ai_error = str(e)
+
+                # ── spinner 밖에서 캐시 저장 & 렌더 ──
+                if _res_json and "candidates" in _res_json:
+                    import re as _re
+                    parts   = _res_json["candidates"][0]["content"].get("parts", [])
+                    ai_text = "".join(p.get("text", "") for p in parts if "text" in p).strip()
+                    # Gemini이 삽입하는 불필요한 텍스트 제거
+                    ai_html = _re.sub(r'```json\s*\[.*?\]\s*```', '', ai_text, flags=_re.DOTALL)
+                    ai_html = _re.sub(r'```python\s*.*?```', '', ai_html, flags=_re.DOTALL)
+                    ai_html = _re.sub(r'```.*?```', '', ai_html, flags=_re.DOTALL)
+                    ai_html = _re.sub(r'\[\s*\{\s*"query".*?\}\s*\]', '', ai_html, flags=_re.DOTALL)
+                    ai_html = _re.sub(r'print\s*\(.*?\)\s*', '', ai_html, flags=_re.DOTALL)
+                    ai_html = _re.sub(r'google_search\.\w+\(.*?\)', '', ai_html, flags=_re.DOTALL)
+                    ai_html = _re.sub(r'(?i)disclaimer.*?(?=\n\n|🌍)', '', ai_html, flags=_re.DOTALL)
+                    ai_html = _re.sub(r'(?i)I am an AI.*?(?=\n\n|🌍)', '', ai_html, flags=_re.DOTALL)
+                    ai_html = _re.sub(r'(?i)(?:Note|Warning|Caution)\s*:?\s*(?:I am|This is|The following).*?(?=\n\n|🌍)', '', ai_html, flags=_re.DOTALL)
+                    # 🌍 이전의 모든 텍스트 제거 (프롬프트에서 🌍로 시작하도록 지시함)
+                    _globe_idx = ai_html.find('🌍')
+                    if _globe_idx > 0:
+                        ai_html = ai_html[_globe_idx:]
+                    # 🌍가 없으면 Gemini가 제대로 응답하지 않은 것 → 폴백
+                    if '🌍' not in ai_html:
+                        ai_html = ""
+                    ai_html = _re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', ai_html)
+                    ai_html = _re.sub(r'<(tool_code|function_call|tool_result|code_execution)[^>]*>.*?</\1>', '', ai_html, flags=_re.DOTALL)
+                    ai_html = ai_html.replace("\n", "<br>")                
+                    if ai_html.strip():
+                        src_label = "🔍 Google 검색 포함" if _used_search else ("📰 네이버 뉴스 기반" if news_txt else "📊 Prophet 데이터만")
+                        source_tag = f'<div style="font-size:0.68rem;color:#4a5568;margin-top:8px">🤖 {_used_model} · {src_label}</div>'
+                        st.session_state["cached_ai_html"] = ai_html
+                        st.session_state["cached_ai_src"]  = source_tag
+                        st.markdown(f'<div class="ai-box">{ai_html}{source_tag}</div>', unsafe_allow_html=True)
+                    else:
+                        # Gemini가 코드만 출력하고 분석을 안 한 경우 → 폴백
+                        st.session_state["cached_ai_html"] = None
+                        st.session_state["cached_ai_src"]  = None
+                        _show_fallback_briefing(display_name, cp, pred_days, pred_end, pred_pct, pred_lower, pred_upper)
+                else:
+                    # 에러 시 캐시에 저장 → 재호출 방지
+                    err_msg = _ai_error or "알 수 없는 오류"
+                    st.session_state["cached_ai_html"] = f'<span style="color:#fc5c5c">⚠️ {err_msg}</span>'
+                    st.session_state["cached_ai_src"]  = ""
+                    st.warning(f"⚠️ Gemini API 오류: {err_msg}")
+                    _show_fallback_briefing(display_name, cp, pred_days, pred_end, pred_pct, pred_lower, pred_upper)
+
+            else:
+                st.info("💡 Streamlit Secrets에 `GEMINI_API_KEY`를 등록하면 AI 브리핑이 활성화됩니다.")
+                _show_fallback_briefing(display_name, cp, pred_days, pred_end, pred_pct, pred_lower, pred_upper)
+
+            st.markdown('</div><div class="bottom-right">', unsafe_allow_html=True)
+
+            st.markdown('<div class="section-header">📰 네이버 뉴스</div>', unsafe_allow_html=True)
+
+            if news_status == "ok" and news_raw:
+                for n in news_raw:
+                    title = n.get("title","").strip()
+                    link  = n.get("link","#")
+                    pub   = n.get("pub","")
+                    if not title: continue
+                    st.markdown(
+                        f'<div class="news-card">'
+                        f'<span style="color:#4a5568;font-size:0.68rem">{pub}&nbsp;&nbsp;</span>'
+                        f'<a href="{link}" target="_blank" style="color:#a0aec0;text-decoration:none;line-height:1.6">{title}</a>'
+                        f'</div>',
+                        unsafe_allow_html=True
+                    )
+            elif news_status == "no_key":
+                st.markdown("""
+                <div class="news-card">
+                    <div style="color:#f9a825;font-size:0.8rem;font-weight:600;margin-bottom:6px">🔑 Naver API 키 미등록</div>
+                    <div style="color:#718096;font-size:0.78rem;line-height:1.7">
+                        ① <a href="https://developers.naver.com/apps/#/register" target="_blank" style="color:#4d9fff">developers.naver.com</a> 접속<br>
+                        ② 애플리케이션 등록 → <b>검색 API</b> 선택<br>
+                        ③ Client ID / Secret 복사<br>
+                        ④ Streamlit Secrets에 추가:
+                    </div>
+                    <div style="background:#0d1117;border-radius:6px;padding:8px 10px;margin-top:8px;font-family:'JetBrains Mono',monospace;font-size:0.72rem;color:#79c0ff;line-height:1.8">
+                        NAVER_CLIENT_ID = "여기에_ID"<br>
+                        NAVER_CLIENT_SECRET = "여기에_SECRET"
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+            elif news_status.startswith("empty:"):
+                st.markdown(f'<div class="news-card" style="color:#a0aec0;font-size:0.8rem">🔍 검색 결과 없음</div>', unsafe_allow_html=True)
+            elif news_status.startswith("api_error"):
+                st.markdown(f'<div class="news-card" style="color:#fc5c5c;font-size:0.8rem">⚠️ {news_status.replace("api_error:","")}</div>', unsafe_allow_html=True)
+
+            st.markdown('</div></div>', unsafe_allow_html=True)
+            st.markdown('<div style="height:2rem"></div>', unsafe_allow_html=True)
+
+        except Exception as e:
+            st.error(f"오류가 발생했습니다: {e}")
+            st.exception(e)
