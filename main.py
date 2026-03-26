@@ -122,8 +122,14 @@ st.markdown("""
         align-items: flex-end !important;
     }
 
-    /* 스캐너 AI 버튼 (standalone primary — columns 밖) */
-    button[data-testid="stBaseButton-primary"] {
+    /* 스캐너 form 컨테이너 투명화 */
+    [data-testid="stForm"] {
+        border: none !important;
+        padding: 0 !important;
+        background: transparent !important;
+    }
+    /* 스캐너 AI 버튼 (form submit) */
+    [data-testid="stFormSubmitButton"] > button {
         background: linear-gradient(135deg, #1a1f3a, #1e2d4a) !important;
         border: 1px solid rgba(99,102,241,0.35) !important;
         color: #c4b5fd !important;
@@ -141,10 +147,10 @@ st.markdown("""
         min-width: auto !important;
         max-width: 130px !important;
         white-space: nowrap !important;
-        margin-top: -8px !important;
-        margin-bottom: 4px !important;
+        margin-top: -4px !important;
+        margin-bottom: 0 !important;
     }
-    button[data-testid="stBaseButton-primary"]:hover {
+    [data-testid="stFormSubmitButton"] > button:hover {
         background: linear-gradient(135deg, #252b50, #2d3a6a) !important;
         border-color: rgba(139,92,246,0.6) !important;
         color: #e0d4ff !important;
@@ -1230,8 +1236,7 @@ def _render_scanner():
     )
 
     try:
-        with st.spinner("📡 80개 종목 멀티팩터 퀀트 스캔 중..."):
-            _scanner_df = run_scanner(_scanner_date)
+        _scanner_df = run_scanner(_scanner_date)
     except Exception as _scan_err:
         _scanner_df = pd.DataFrame()
         st.error(f"스캔 중 오류: {_scan_err}")
@@ -1271,44 +1276,14 @@ def _render_scanner():
         _cached_ai = st.session_state[_scanner_ai_cache_key].get(_code)
         _score_cls = "score-high" if _score >= 60 else ("score-mid" if _score >= 40 else "score-low")
 
-        # AI 브리핑 HTML (캐시된 경우 — 이스케이프 후 안전태그만 허용)
-        _ai_html = ""
-        if _cached_ai:
-            _safe_ai = html_mod.escape(str(_cached_ai))
-            # 안전한 태그만 복원
-            for _tag in ["br", "strong", "/strong", "b", "/b", "em", "/em"]:
-                _safe_ai = _safe_ai.replace(f"&lt;{_tag}&gt;", f"<{_tag}>")
-            _safe_ai = _safe_ai.replace("\n", "<br>")
-            _ai_html = (
-                '<div style="margin-top:12px;padding:12px 14px;'
-                'background:linear-gradient(135deg,#0c1525 0%,#111d30 100%);'
-                'border:1px solid #1e3a5f;border-left:3px solid #3b82f6;border-radius:6px">'
-                '<div style="font-size:0.58rem;font-weight:600;color:#3b82f6;'
-                'letter-spacing:1.5px;margin-bottom:8px">✦ AI PREDICTION</div>'
-                f'<div style="font-size:0.76rem;line-height:1.8;color:#cbd5e0">{_safe_ai}</div>'
-                '</div>'
-            )
-
-        # AI 배지 HTML (종목명 옆 — 예쁜 디자인 유지)
-        _ai_badge = ""
-        if not _cached_ai and "GEMINI_API_KEY" in st.secrets:
-            _ai_badge = (
-                '<span style="background:linear-gradient(135deg,#1a1f3a,#1e2d4a);'
-                'border:1px solid rgba(99,102,241,0.35);color:#c4b5fd;'
-                "font-family:'Noto Sans KR',sans-serif;font-size:0.48rem;font-weight:500;"
-                'letter-spacing:0.8px;padding:2px 8px;border-radius:5px;'
-                'margin-left:6px;white-space:nowrap">✦ AI 예측내용</span>'
-            )
-
-        # 카드 전체 (하나의 HTML 블록)
-        st.markdown(f'''
+        # 카드 HTML (AI 결과는 별도 렌더 — HTML 깨짐 방지)
+        _card_html = f'''
         <div class="scanner-card">
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
                 <div style="display:flex;align-items:center;gap:8px">
                     <span class="scanner-rank rank-{_rank if _rank <= 3 else 'other'}">{_rank}</span>
                     <span style="font-size:0.88rem;font-weight:600;color:#e2e8f0">{_row["name"]}</span>
                     <span style="font-size:0.68rem;color:#4a5568">{_code}</span>
-                    {_ai_badge}
                 </div>
                 <span class="scanner-score {_score_cls}">{_score:.0f}/100</span>
             </div>
@@ -1329,19 +1304,40 @@ def _render_scanner():
                 <div style="flex:{max(_ra, 0.5)};background:linear-gradient(135deg,#9f7aea,#805ad5);color:#fff;text-align:center;border-radius:0 4px 4px 0;overflow:hidden;white-space:nowrap">리스크 {_ra:.0f}</div>
             </div>
             <div style="font-size:0.55rem;color:#4a5568">모멘텀 /35 · 진입 /20 · 추세 /25 · 리스크 /20</div>
-            {_ai_html}
         </div>
-        ''', unsafe_allow_html=True)
+        '''
 
-        # 실제 AI 호출 버튼 (카드 바로 아래, 밀착)
-        if not _cached_ai and "GEMINI_API_KEY" in st.secrets:
-            _btn_key = f"ai_{_scanner_date}_{_code}"
-            if st.button("✦ AI 예측내용", key=_btn_key, type="primary"):
-                with st.spinner("🤖 AI 분석 중..."):
-                    _ai_text = fetch_scanner_briefing(_code, _row.to_dict(), _scanner_date)
-                if _ai_text:
-                    st.session_state[_scanner_ai_cache_key][_code] = _ai_text
-                    st.rerun(scope="fragment")
+        # st.form으로 카드 + 버튼 통합 (검색 버튼 CSS와 완전 분리)
+        _submitted = False
+        with st.form(key=f"scanner_{_code}", clear_on_submit=False, border=False):
+            st.markdown(_card_html, unsafe_allow_html=True)
+            if not _cached_ai and "GEMINI_API_KEY" in st.secrets:
+                _submitted = st.form_submit_button("✦ AI 예측내용")
+
+        # AI 결과 (카드 HTML 밖 — Gemini 응답이 카드를 깨뜨리지 않음)
+        if _cached_ai:
+            _safe_ai = html_mod.escape(str(_cached_ai))
+            for _tag in ["br", "strong", "/strong", "b", "/b", "em", "/em"]:
+                _safe_ai = _safe_ai.replace(f"&lt;{_tag}&gt;", f"<{_tag}>")
+            _safe_ai = _safe_ai.replace("\n", "<br>")
+            st.markdown(
+                '<div style="margin-top:-6px;margin-bottom:8px;padding:12px 14px;'
+                'background:linear-gradient(135deg,#0c1525 0%,#111d30 100%);'
+                'border:1px solid #1e3a5f;border-left:3px solid #3b82f6;border-radius:0 0 6px 6px">'
+                '<div style="font-size:0.58rem;font-weight:600;color:#3b82f6;'
+                'letter-spacing:1.5px;margin-bottom:8px">✦ AI PREDICTION</div>'
+                f'<div style="font-size:0.76rem;line-height:1.8;color:#cbd5e0">{_safe_ai}</div>'
+                '</div>',
+                unsafe_allow_html=True
+            )
+
+        # AI 호출 처리
+        if _submitted:
+            with st.spinner("🤖 AI 분석 중..."):
+                _ai_text = fetch_scanner_briefing(_code, _row.to_dict(), _scanner_date)
+            if _ai_text:
+                st.session_state[_scanner_ai_cache_key][_code] = _ai_text
+                st.rerun(scope="fragment")
 
     st.markdown(
         '<div style="text-align:center;color:#4a5568;font-size:0.6rem;margin-top:1rem">'
