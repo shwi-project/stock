@@ -155,11 +155,11 @@ st.markdown("""
         transform-origin: right center !important;
         font-weight: 500 !important;
         letter-spacing: 0.3px !important;
-        padding: 1px 8px !important;
-        height: 16px !important;
-        min-height: 16px !important;
-        max-height: 16px !important;
-        border-radius: 8px !important;
+        padding: 0 5px !important;
+        height: 18px !important;
+        min-height: 18px !important;
+        max-height: 18px !important;
+        border-radius: 4px !important;
         transition: all 0.2s ease !important;
         width: auto !important;
         min-width: auto !important;
