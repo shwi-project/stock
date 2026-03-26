@@ -1236,73 +1236,58 @@ with _tab_scanner:
             _score = _row["score"]
             _chg_arrow = "▲" if _row["change_pct"] >= 0 else "▼"
             _chg_color = "#fc5c5c" if _row["change_pct"] >= 0 else "#4d9fff"
-            _signals_html = "".join(f'<span class="signal-tag">{s}</span>' for s in _row["signals"])
+            _signals_txt = " · ".join(_row["signals"])
             _medal = '🥇' if _rank==1 else '🥈' if _rank==2 else '🥉' if _rank==3 else '🏅'
 
-            # 필라 점수 바
+            # 필라 점수
             _m = _row.get("momentum", 0)
             _mr = _row.get("mean_rev", 0)
             _t = _row.get("trend", 0)
             _ra = _row.get("risk_adj", 0)
+            # 바 비율 (최소 5% 보장)
+            _total = max(_m + _mr + _t + _ra, 1)
+            _pm = max(_m / _total * 100, 5)
+            _pmr = max(_mr / _total * 100, 5)
+            _pt = max(_t / _total * 100, 5)
+            _pra = max(_ra / _total * 100, 5)
+
+            _code = _row["code"]
+            _cached_ai = st.session_state[_scanner_ai_cache_key].get(_code)
+
+            # AI 브리핑 캐시 확인
+            _ai_section = ""
+            if _cached_ai:
+                _ai_section = f'<div style="margin-top:10px;padding:10px 12px;background:#131825;border-radius:8px;border-left:3px solid #4d9fff;font-size:0.78rem;line-height:1.8;color:#cbd5e0">{_cached_ai}</div>'
 
             with st.expander(f"{_medal}  {_row['name']}  ({_row['code']})  —  {_row['price']:,}원  {_chg_arrow}{abs(_row['change_pct']):.2f}%  ·  SCORE {_score}/100", expanded=False):
-                # 시그널 태그 + 기본 지표
-                st.markdown(f'''
-                <div style="padding:4px 0">
-                    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
-                        {_signals_html}
-                        <span style="font-size:0.65rem;color:#4a5568;margin-left:auto">
-                            RSI {_row["rsi"]} · ADX {_row.get("adx",0)} · Sharpe {_row.get("sharpe",0)} · 거래량 {_row["vol_ratio"]}x
-                        </span>
-                    </div>
-                </div>
-                ''', unsafe_allow_html=True)
+                # 전체 내용을 하나의 HTML 블록으로 렌더링 (CSS 충돌 방지)
+                st.markdown(f'''<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
+<div style="font-size:0.72rem;color:#a0aec0;margin-bottom:6px">{_signals_txt}</div>
+<div style="font-size:0.65rem;color:#4a5568;margin-bottom:8px">RSI {_row["rsi"]} · ADX {_row.get("adx",0)} · Sharpe {_row.get("sharpe",0)} · 거래량 {_row["vol_ratio"]}x</div>
+<div style="display:flex;gap:3px;margin-bottom:4px;font-size:0.62rem;font-family:monospace;height:24px;line-height:24px">
+<div style="width:{_pm:.0f}%;background:#3a7bd5;color:#fff;text-align:center;border-radius:4px 0 0 4px;overflow:hidden;white-space:nowrap">모멘텀 {_m:.0f}</div>
+<div style="width:{_pmr:.0f}%;background:#e8961f;color:#fff;text-align:center;overflow:hidden;white-space:nowrap">진입 {_mr:.0f}</div>
+<div style="width:{_pt:.0f}%;background:#2d9f99;color:#fff;text-align:center;overflow:hidden;white-space:nowrap">추세 {_t:.0f}</div>
+<div style="width:{_pra:.0f}%;background:#805ad5;color:#fff;text-align:center;border-radius:0 4px 4px 0;overflow:hidden;white-space:nowrap">리스크 {_ra:.0f}</div>
+</div>
+<div style="font-size:0.58rem;color:#4a5568;margin-bottom:2px">모멘텀(/{35}) · 진입(/{20}) · 추세(/{25}) · 리스크(/{20})</div>
+{_ai_section}
+</div>''', unsafe_allow_html=True)
 
-                # 4-Pillar 점수 분해 바
-                st.markdown(f'''
-                <div style="display:flex;gap:4px;margin:6px 0 10px 0;font-size:0.65rem;font-family:'JetBrains Mono',monospace">
-                    <div style="flex:{_m};background:linear-gradient(135deg,#4d9fff,#3a7bd5);color:#fff;padding:3px 6px;border-radius:4px 0 0 4px;text-align:center;min-width:40px" title="모멘텀 {_m}/35">
-                        모멘텀 {_m:.0f}
-                    </div>
-                    <div style="flex:{_mr};background:linear-gradient(135deg,#f5a623,#e8961f);color:#fff;padding:3px 6px;text-align:center;min-width:40px" title="평균회귀 {_mr}/20">
-                        진입 {_mr:.0f}
-                    </div>
-                    <div style="flex:{_t};background:linear-gradient(135deg,#38b2ac,#2d9f99);color:#fff;padding:3px 6px;text-align:center;min-width:40px" title="추세품질 {_t}/25">
-                        추세 {_t:.0f}
-                    </div>
-                    <div style="flex:{_ra};background:linear-gradient(135deg,#9f7aea,#805ad5);color:#fff;padding:3px 6px;border-radius:0 4px 4px 0;text-align:center;min-width:40px" title="위험조정 {_ra}/20">
-                        리스크 {_ra:.0f}
-                    </div>
-                </div>
-                ''', unsafe_allow_html=True)
-
-                # AI 브리핑: 버튼 클릭 시에만 호출
-                _code = _row["code"]
-                _cached_ai = st.session_state[_scanner_ai_cache_key].get(_code)
-
-                if _cached_ai:
-                    st.markdown(f'<div class="scanner-ai">{_cached_ai}</div>', unsafe_allow_html=True)
-                else:
+                # AI 브리핑: 버튼 (캐시 없을 때만 표시)
+                if not _cached_ai:
                     if "GEMINI_API_KEY" not in st.secrets:
-                        st.markdown(
-                            '<div style="color:#4a5568;font-size:0.72rem;padding:4px 0">'
-                            '🔑 Gemini API 키 미등록 — AI 브리핑 비활성</div>',
-                            unsafe_allow_html=True
-                        )
+                        st.caption("🔑 Gemini API 키 미등록")
                     else:
                         _btn_key = f"ai_btn_{_scanner_date}_{_code}"
-                        if st.button(f"🤖 {_row['name']} AI 브리핑 보기", key=_btn_key, type="secondary"):
-                            with st.spinner(f"🤖 {_row['name']} AI 분석 중..."):
+                        if st.button(f"🤖 AI 브리핑", key=_btn_key):
+                            with st.spinner("AI 분석 중..."):
                                 _ai_text = fetch_scanner_briefing(_code, _row.to_dict(), _scanner_date)
                             if _ai_text:
                                 st.session_state[_scanner_ai_cache_key][_code] = _ai_text
-                                st.markdown(f'<div class="scanner-ai">{_ai_text}</div>', unsafe_allow_html=True)
+                                st.rerun()
                             else:
-                                st.markdown(
-                                    '<div class="scanner-ai" style="color:#4a5568">'
-                                    '⚠️ AI 분석을 가져올 수 없습니다. 잠시 후 다시 시도해주세요.</div>',
-                                    unsafe_allow_html=True
-                                )
+                                st.error("AI 분석을 가져올 수 없습니다.")
 
     st.markdown(
         '<div style="text-align:center;color:#4a5568;font-size:0.65rem;margin-top:1rem">'
