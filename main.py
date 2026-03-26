@@ -50,10 +50,14 @@ st.markdown("""
     [data-testid="collapsedControl"] { display: none !important; }
 
     /* 모바일 좌우 스크롤 방지 */
-    html, body, [data-testid="stAppViewContainer"], .main {
+    html, body, [data-testid="stAppViewContainer"], .main,
+    [data-testid="stVerticalBlock"], [data-testid="stHorizontalBlock"],
+    [data-testid="stElementContainer"], section[data-testid="stSidebar"],
+    .block-container, [data-testid="stTabs"], [data-testid="stTabContent"] {
         overflow-x: hidden !important;
         max-width: 100vw !important;
     }
+    * { box-sizing: border-box !important; }
 
     .block-container {
         padding-top: 0.7rem !important;
@@ -1447,66 +1451,28 @@ def _render_scanner():
     _now_ts = _time_mod.time()
     _elapsed_min = int((_now_ts - _cached_ts) / 60) if _cached_ts else 0
 
-    _load_requested_key = "scanner_load_requested"
-    _bg_result_key = "scanner_bg_result"
-    _bg_running_key = "scanner_bg_running"
-
-    # 백그라운드 스레드 완료 확인
-    if st.session_state.get(_bg_running_key) and _bg_result_key in st.session_state:
-        _scanner_df = st.session_state[_bg_result_key]
-        st.session_state[_ss_cache_key] = _scanner_df
-        st.session_state[_ss_time_key] = _time_mod.time()
-        st.session_state[_bg_running_key] = False
-        del st.session_state[_bg_result_key]
-        _loading_placeholder.empty()
-    elif _cached_df_ss is not None:
-        # 캐시 존재 → 즉시 사용
+    if _cached_df_ss is not None:
+        # 세션 캐시 존재 → 즉시 사용 (블로킹 zero)
         _scanner_df = _cached_df_ss
-    elif st.session_state.get(_bg_running_key):
-        # 백그라운드 실행 중 → 대기 메시지 + 3초 후 재확인
-        _loading_placeholder.markdown(
-            '<div style="text-align:center;padding:30px 20px;color:#8b95a5;font-size:0.75rem">'
-            '🔄 추천 종목 조회 중... 종목 검색은 자유롭게 이용 가능합니다</div>',
-            unsafe_allow_html=True
-        )
-        _time_mod.sleep(3)
-        st.rerun(scope="fragment")
-        return
-    elif st.session_state.get(_load_requested_key, False):
-        # 로딩 요청됨 → 백그라운드 스레드로 실행
-        import threading
-        st.session_state[_load_requested_key] = False
-        st.session_state[_bg_running_key] = True
-        _date_for_bg = _scanner_date
-        _ss = st.session_state
-        def _bg_run():
-            try:
-                _result = run_scanner(_date_for_bg)
-                _ss[_bg_result_key] = _result
-            except Exception:
-                _ss[_bg_result_key] = pd.DataFrame()
-        _t = threading.Thread(target=_bg_run, daemon=True)
-        _t.start()
-        _loading_placeholder.markdown(
-            '<div style="text-align:center;padding:30px 20px;color:#8b95a5;font-size:0.75rem">'
-            '🔄 추천 종목 조회 중... 종목 검색은 자유롭게 이용 가능합니다</div>',
-            unsafe_allow_html=True
-        )
-        _time_mod.sleep(3)
-        st.rerun(scope="fragment")
-        return
     else:
         # 최초 로드: 버튼으로 수동 조회
         _load_btn = st.button("🔎 추천 종목 불러오기", key="scanner_load", use_container_width=True)
-        if _load_btn:
-            st.session_state[_load_requested_key] = True
-            st.rerun(scope="fragment")
-        st.markdown(
-            '<div style="text-align:center;padding:40px 20px;color:#4a5568;font-size:0.75rem">'
-            '버튼을 눌러 오늘의 추천 종목을 조회하세요</div>',
-            unsafe_allow_html=True
-        )
-        return
+        if not _load_btn:
+            st.markdown(
+                '<div style="text-align:center;padding:40px 20px;color:#4a5568;font-size:0.75rem">'
+                '버튼을 눌러 오늘의 추천 종목을 조회하세요</div>',
+                unsafe_allow_html=True
+            )
+            return
+        # 버튼 클릭 → 조회 (st.cache_data 있으면 즉시, 없으면 계산)
+        with st.spinner("🔄 추천 종목 조회 중..."):
+            try:
+                _scanner_df = run_scanner(_scanner_date)
+                st.session_state[_ss_cache_key] = _scanner_df
+                st.session_state[_ss_time_key] = _time_mod.time()
+            except Exception as _scan_err:
+                st.error(f"스캔 중 오류: {_scan_err}")
+                return
 
     # 종목명 매핑
     if not _scanner_df.empty:
