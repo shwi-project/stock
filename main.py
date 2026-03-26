@@ -129,8 +129,8 @@ st.markdown("""
         height: 0 !important;
         overflow: visible !important;
         padding: 0 !important;
-        margin-top: -38px !important;
-        margin-bottom: 12px !important;
+        margin-top: -150px !important;
+        margin-bottom: 125px !important;
         position: relative !important;
         z-index: 10 !important;
     }
