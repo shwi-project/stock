@@ -1386,20 +1386,34 @@ def _render_scanner():
     )
 
     _loading_placeholder = st.empty()
-    # ── session_state 이중 캐시: 전체 리런 시 블로킹 방지 ──
+    # ── session_state 캐시: 검색탭 리런 시 블로킹 완전 방지 ──
     _ss_cache_key = f"scanner_df_{_scanner_date}"
     _ss_time_key = f"scanner_time_{_scanner_date}"
-    _ss_ttl = 600  # 10분
     import time as _time_mod
-    _now_ts = _time_mod.time()
-    _cached_ts = st.session_state.get(_ss_time_key, 0)
     _cached_df_ss = st.session_state.get(_ss_cache_key)
+    _cached_ts = st.session_state.get(_ss_time_key, 0)
+    _now_ts = _time_mod.time()
+    _elapsed_min = int((_now_ts - _cached_ts) / 60) if _cached_ts else 0
 
-    if _cached_df_ss is not None and (_now_ts - _cached_ts) < _ss_ttl:
-        # 캐시 유효 → 즉시 사용 (블로킹 없음)
+    # 새로고침 버튼 (캐시 있을 때만 표시)
+    _force_refresh = False
+    if _cached_df_ss is not None:
+        _refresh_col1, _refresh_col2 = st.columns([8, 2])
+        with _refresh_col2:
+            _force_refresh = st.button("🔄 새로고침", key="scanner_refresh", use_container_width=True)
+        with _refresh_col1:
+            if _cached_ts:
+                st.markdown(
+                    f'<div style="font-size:0.6rem;color:#4a5568;padding-top:8px">'
+                    f'마지막 조회: {_elapsed_min}분 전</div>',
+                    unsafe_allow_html=True
+                )
+
+    if _cached_df_ss is not None and not _force_refresh:
+        # 캐시 존재 → 즉시 사용 (블로킹 없음, 검색탭 영향 zero)
         _scanner_df = _cached_df_ss
     else:
-        # 캐시 만료 또는 최초 → 재계산
+        # 최초 로드 또는 새로고침 클릭 → 재계산
         try:
             _loading_placeholder.markdown(
                 '<div style="text-align:center;padding:20px;color:#8b95a5;font-size:0.75rem">'
@@ -1408,7 +1422,7 @@ def _render_scanner():
             )
             _scanner_df = run_scanner(_scanner_date)
             st.session_state[_ss_cache_key] = _scanner_df
-            st.session_state[_ss_time_key] = _now_ts
+            st.session_state[_ss_time_key] = _time_mod.time()
             _loading_placeholder.empty()
         except Exception as _scan_err:
             _scanner_df = st.session_state.get(_ss_cache_key, pd.DataFrame())
