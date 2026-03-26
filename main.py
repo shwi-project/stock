@@ -8,6 +8,7 @@ from streamlit_lightweight_charts import renderLightweightCharts
 from streamlit_autorefresh import st_autorefresh
 import requests
 import json
+import html as html_mod
 import base64
 from datetime import datetime, timedelta
 
@@ -88,15 +89,14 @@ st.markdown("""
         padding: 0.35rem 0 0.2rem 0; border-bottom: 1px solid #1e2435; margin-bottom: 0.45rem;
     }
     
-    /* 검색 돋보기 버튼 전용 스타일 */
-    [data-testid="stHorizontalBlock"] .stButton > button {
+    /* 검색 돋보기 버튼 전용 (secondary 타입만) */
+    [data-testid="stBaseButton-secondary"] {
         height: 32px !important;
         min-height: 32px !important;
         max-height: 32px !important;
-        padding: 0 !important;
+        padding: 0 8px !important;
         line-height: 32px !important;
         font-size: 0.9rem !important;
-        margin-bottom: 5px !important;
         display: flex !important;
         align-items: center !important;
         justify-content: center !important;
@@ -104,40 +104,34 @@ st.markdown("""
         border: 1px solid #3d4f6e !important;
         color: #e2e8f0 !important;
     }
-    [data-testid="stHorizontalBlock"] .stButton > button:hover {
+    [data-testid="stBaseButton-secondary"]:hover {
         background: #3d4f6e !important;
-        border-color: #4d9fff !important;
-        color: #e2e8f0 !important;
-    }
-    [data-testid="stHorizontalBlock"] .stButton > button:active {
-        background: #1e2d45 !important;
         border-color: #4d9fff !important;
     }
 
-    /* 스캐너 AI 브리핑 버튼 */
+    /* 스캐너 AI 예측 버튼 (primary 타입) */
     [data-testid="stBaseButton-primary"] {
         background: linear-gradient(135deg, #1a1f3a, #1e2d4a) !important;
-        border: 1px solid rgba(99,102,241,0.4) !important;
+        border: 1px solid rgba(99,102,241,0.35) !important;
         color: #c4b5fd !important;
         font-family: 'Noto Sans KR', sans-serif !important;
-        font-size: 0.5rem !important;
+        font-size: 0.52rem !important;
         font-weight: 500 !important;
-        letter-spacing: 1px !important;
-        padding: 2px 10px !important;
-        height: 22px !important;
-        min-height: 22px !important;
-        border-radius: 6px !important;
+        letter-spacing: 0.8px !important;
+        padding: 0 10px !important;
+        height: 24px !important;
+        min-height: 24px !important;
+        border-radius: 5px !important;
         transition: all 0.25s ease !important;
-        margin-top: -6px !important;
-        margin-bottom: 8px !important;
         width: auto !important;
-        max-width: 170px !important;
+        max-width: 130px !important;
+        white-space: nowrap !important;
     }
     [data-testid="stBaseButton-primary"]:hover {
         background: linear-gradient(135deg, #252b50, #2d3a6a) !important;
         border-color: rgba(139,92,246,0.6) !important;
         color: #e0d4ff !important;
-        box-shadow: 0 0 16px rgba(139,92,246,0.2) !important;
+        box-shadow: 0 0 12px rgba(139,92,246,0.15) !important;
     }
 
     .ai-box {
@@ -249,7 +243,7 @@ st.markdown("""
     footer     { visibility: hidden; }
     .stDeployButton { display: none; }
     [data-testid="stHorizontalBlock"] { flex-wrap: nowrap !important; flex-direction: row !important; align-items: flex-start !important; gap: 0.3rem !important; }
-    [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] { min-width: 0 !important; overflow: hidden; }
+    [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] { min-width: 0 !important; }
     .bottom-wrap { display: grid; grid-template-columns: 3fr 2fr; gap: 0.8rem; margin-top: 0.5rem; }
     .bottom-left  { min-width: 0; }
     .bottom-right { min-width: 0; }
@@ -1201,8 +1195,9 @@ with _tab_analysis:
     with _col2:
         _query_btn = st.button("🔍", use_container_width=True)
 
-# ─── 탭 2: 추천 종목 (모닝 스캐너) ───
-with _tab_scanner:
+# ─── 탭 2: 추천 종목 (모닝 스캐너) ── @st.fragment로 검색탭 영향 방지 ───
+@st.fragment
+def _render_scanner():
     _scanner_date = now_kst().strftime("%Y%m%d")
     _scanner_today_str = now_kst().strftime("%Y년 %m월 %d일")
 
@@ -1218,17 +1213,13 @@ with _tab_scanner:
     )
 
     try:
-        with st.spinner("📡 80개 종목 멀티팩터 퀀트 스캔 중... (최초 1회, 이후 10분 캐시)"):
+        with st.spinner("📡 80개 종목 멀티팩터 퀀트 스캔 중..."):
             _scanner_df = run_scanner(_scanner_date)
     except Exception as _scan_err:
         _scanner_df = pd.DataFrame()
-        st.markdown(
-            f'<div class="scanner-card" style="color:#fc5c5c;padding:1rem;font-size:0.8rem">'
-            f'⚠️ 스캔 중 오류: {_scan_err}</div>',
-            unsafe_allow_html=True
-        )
+        st.error(f"스캔 중 오류: {_scan_err}")
 
-    # 종목명 매핑 (run_scanner 밖에서 처리)
+    # 종목명 매핑
     if not _scanner_df.empty:
         try:
             _all_for_names = load_all_stocks()
@@ -1243,102 +1234,111 @@ with _tab_scanner:
             '오늘은 뚜렷한 매수 시그널이 감지되지 않았습니다.</div>',
             unsafe_allow_html=True
         )
-    else:
-        _scanner_ai_cache_key = f"scanner_ai_{_scanner_date}"
-        if _scanner_ai_cache_key not in st.session_state:
-            st.session_state[_scanner_ai_cache_key] = {}
+        return
 
-        # AI 브리핑 트리거 처리 (rerun 전에)
-        _ai_trigger = st.session_state.get("_scanner_ai_trigger")
-        if _ai_trigger and "GEMINI_API_KEY" in st.secrets:
-            _trig_code = _ai_trigger
-            st.session_state["_scanner_ai_trigger"] = None
-            _trig_row = _scanner_df[_scanner_df["code"] == _trig_code]
-            if not _trig_row.empty:
-                with st.spinner(f"🤖 AI 분석 중..."):
-                    _ai_text = fetch_scanner_briefing(_trig_code, _trig_row.iloc[0].to_dict(), _scanner_date)
-                if _ai_text:
-                    st.session_state[_scanner_ai_cache_key][_trig_code] = _ai_text
+    _scanner_ai_cache_key = f"scanner_ai_{_scanner_date}"
+    if _scanner_ai_cache_key not in st.session_state:
+        st.session_state[_scanner_ai_cache_key] = {}
 
-        for _idx, _row in _scanner_df.iterrows():
-            _rank = _idx + 1
-            _score = _row["score"]
-            _chg_arrow = "▲" if _row["change_pct"] >= 0 else "▼"
-            _chg_color = "#fc5c5c" if _row["change_pct"] >= 0 else "#4d9fff"
-            _signals_html = "".join(f'<span class="signal-tag">{s}</span>' for s in _row["signals"])
-            _m = _row.get("momentum", 0)
-            _mr = _row.get("mean_rev", 0)
-            _t = _row.get("trend", 0)
-            _ra = _row.get("risk_adj", 0)
-            _code = _row["code"]
-            _cached_ai = st.session_state[_scanner_ai_cache_key].get(_code)
+    # AI 브리핑 트리거 처리
+    _ai_trigger = st.session_state.pop("_scanner_ai_trigger", None)
+    if _ai_trigger and "GEMINI_API_KEY" in st.secrets:
+        _trig_row = _scanner_df[_scanner_df["code"] == _ai_trigger]
+        if not _trig_row.empty:
+            with st.spinner("🤖 AI 분석 중..."):
+                _ai_text = fetch_scanner_briefing(_ai_trigger, _trig_row.iloc[0].to_dict(), _scanner_date)
+            if _ai_text:
+                st.session_state[_scanner_ai_cache_key][_ai_trigger] = _ai_text
 
-            # 스코어 색상
-            _score_cls = "score-high" if _score >= 60 else ("score-mid" if _score >= 40 else "score-low")
+    for _idx, _row in _scanner_df.iterrows():
+        _rank = _idx + 1
+        _score = _row["score"]
+        _chg_arrow = "▲" if _row["change_pct"] >= 0 else "▼"
+        _chg_color = "#fc5c5c" if _row["change_pct"] >= 0 else "#4d9fff"
+        _signals_html = "".join(f'<span class="signal-tag">{s}</span>' for s in _row["signals"])
+        _m = _row.get("momentum", 0)
+        _mr = _row.get("mean_rev", 0)
+        _t = _row.get("trend", 0)
+        _ra = _row.get("risk_adj", 0)
+        _code = _row["code"]
+        _cached_ai = st.session_state[_scanner_ai_cache_key].get(_code)
+        _score_cls = "score-high" if _score >= 60 else ("score-mid" if _score >= 40 else "score-low")
 
-            # 필라 바 비율
-            _total_p = max(_m + _mr + _t + _ra, 1)
+        # AI 브리핑 HTML (캐시된 경우)
+        _ai_html = ""
+        if _cached_ai:
+            _safe_ai = html_mod.escape(str(_cached_ai)).replace("\n", "<br>")
+            _ai_html = (
+                '<div style="margin-top:12px;padding:12px 14px;'
+                'background:linear-gradient(135deg,#0c1525 0%,#111d30 100%);'
+                'border:1px solid #1e3a5f;border-left:3px solid #3b82f6;border-radius:6px">'
+                '<div style="font-size:0.58rem;font-weight:600;color:#3b82f6;'
+                'letter-spacing:1.5px;margin-bottom:8px">✦ AI PREDICTION</div>'
+                f'<div style="font-size:0.76rem;line-height:1.8;color:#cbd5e0">{_safe_ai}</div>'
+                '</div>'
+            )
 
-            # AI 브리핑 HTML
-            _ai_html = ""
-            if _cached_ai:
-                _ai_html = (
-                    '<div style="margin-top:12px;padding:12px 14px;'
-                    'background:linear-gradient(135deg,#0c1525,#111d30);'
-                    'border:1px solid #1e3a5f;border-left:3px solid #3b82f6;border-radius:6px">'
-                    '<div style="font-size:0.62rem;font-weight:600;color:#3b82f6;'
-                    'letter-spacing:1.5px;margin-bottom:8px">🤖 AI BRIEFING</div>'
-                    f'<div style="font-size:0.78rem;line-height:1.8;color:#cbd5e0">{_cached_ai}</div>'
-                    '</div>'
-                )
+        # AI 버튼 HTML (카드 내부, 종목명 옆)
+        _ai_btn_html = ""
+        if not _cached_ai and "GEMINI_API_KEY" in st.secrets:
+            _ai_btn_html = (
+                '<span style="background:linear-gradient(135deg,#1a1f3a,#1e2d4a);'
+                'border:1px solid rgba(99,102,241,0.35);color:#c4b5fd;'
+                'font-size:0.5rem;font-weight:500;letter-spacing:0.8px;'
+                'padding:2px 8px;border-radius:5px;margin-left:8px;'
+                'white-space:nowrap">✦ 아래 버튼 클릭</span>'
+            )
 
-            # 카드 전체를 HTML로 렌더
-            st.markdown(f'''
-            <div class="scanner-card">
-                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-                    <div style="display:flex;align-items:center;gap:8px">
-                        <span class="scanner-rank rank-{_rank if _rank <= 3 else 'other'}">{_rank}</span>
-                        <div>
-                            <span style="font-size:0.88rem;font-weight:600;color:#e2e8f0">{_row["name"]}</span>
-                            <span style="font-size:0.68rem;color:#4a5568;margin-left:6px">{_code}</span>
-                        </div>
+        # 카드 전체 HTML
+        st.markdown(f'''
+        <div class="scanner-card">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+                <div style="display:flex;align-items:center;gap:8px">
+                    <span class="scanner-rank rank-{_rank if _rank <= 3 else 'other'}">{_rank}</span>
+                    <div style="display:flex;align-items:center;flex-wrap:wrap;gap:4px">
+                        <span style="font-size:0.88rem;font-weight:600;color:#e2e8f0">{_row["name"]}</span>
+                        <span style="font-size:0.68rem;color:#4a5568">{_code}</span>
                     </div>
-                    <span class="scanner-score {_score_cls}">{_score:.0f}/100</span>
                 </div>
-                <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:8px">
-                    <span style="font-family:'JetBrains Mono',monospace;font-size:1rem;font-weight:600;color:#e2e8f0">{_row["price"]:,}원</span>
-                    <span style="font-size:0.8rem;color:{_chg_color};font-weight:600">{_chg_arrow} {abs(_row["change_pct"]):.2f}%</span>
-                </div>
-                <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:10px">
-                    {_signals_html}
-                    <span style="font-size:0.6rem;color:#4a5568;margin-left:auto">
-                        RSI {_row["rsi"]} · ADX {_row.get("adx",0)} · Sharpe {_row.get("sharpe",0)}
-                    </span>
-                </div>
-                <div style="display:flex;gap:3px;height:22px;font-size:0.6rem;font-family:'JetBrains Mono',monospace;line-height:22px;margin-bottom:4px">
-                    <div style="flex:{_m};background:linear-gradient(135deg,#4d9fff,#3a7bd5);color:#fff;text-align:center;border-radius:4px 0 0 4px;overflow:hidden;white-space:nowrap">모멘텀 {_m:.0f}</div>
-                    <div style="flex:{max(_mr, 0.5)};background:linear-gradient(135deg,#f5a623,#e8961f);color:#fff;text-align:center;overflow:hidden;white-space:nowrap">진입 {_mr:.0f}</div>
-                    <div style="flex:{_t};background:linear-gradient(135deg,#38b2ac,#2d9f99);color:#fff;text-align:center;overflow:hidden;white-space:nowrap">추세 {_t:.0f}</div>
-                    <div style="flex:{max(_ra, 0.5)};background:linear-gradient(135deg,#9f7aea,#805ad5);color:#fff;text-align:center;border-radius:0 4px 4px 0;overflow:hidden;white-space:nowrap">리스크 {_ra:.0f}</div>
-                </div>
-                <div style="font-size:0.55rem;color:#4a5568">모멘텀 /35 · 진입 /20 · 추세 /25 · 리스크 /20</div>
-                {_ai_html}
+                <span class="scanner-score {_score_cls}">{_score:.0f}/100</span>
             </div>
-            ''', unsafe_allow_html=True)
+            <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:8px">
+                <span style="font-family:'JetBrains Mono',monospace;font-size:1rem;font-weight:600;color:#e2e8f0">{_row["price"]:,}원</span>
+                <span style="font-size:0.8rem;color:{_chg_color};font-weight:600">{_chg_arrow} {abs(_row["change_pct"]):.2f}%</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:10px">
+                {_signals_html}
+                <span style="font-size:0.6rem;color:#4a5568;margin-left:auto">
+                    RSI {_row["rsi"]} · ADX {_row.get("adx",0)} · Sharpe {_row.get("sharpe",0)}
+                </span>
+            </div>
+            <div style="display:flex;gap:3px;height:22px;font-size:0.6rem;font-family:'JetBrains Mono',monospace;line-height:22px;margin-bottom:4px">
+                <div style="flex:{_m};background:linear-gradient(135deg,#4d9fff,#3a7bd5);color:#fff;text-align:center;border-radius:4px 0 0 4px;overflow:hidden;white-space:nowrap">모멘텀 {_m:.0f}</div>
+                <div style="flex:{max(_mr, 0.5)};background:linear-gradient(135deg,#f5a623,#e8961f);color:#fff;text-align:center;overflow:hidden;white-space:nowrap">진입 {_mr:.0f}</div>
+                <div style="flex:{_t};background:linear-gradient(135deg,#38b2ac,#2d9f99);color:#fff;text-align:center;overflow:hidden;white-space:nowrap">추세 {_t:.0f}</div>
+                <div style="flex:{max(_ra, 0.5)};background:linear-gradient(135deg,#9f7aea,#805ad5);color:#fff;text-align:center;border-radius:0 4px 4px 0;overflow:hidden;white-space:nowrap">리스크 {_ra:.0f}</div>
+            </div>
+            <div style="font-size:0.55rem;color:#4a5568">모멘텀 /35 · 진입 /20 · 추세 /25 · 리스크 /20</div>
+            {_ai_html}
+        </div>
+        ''', unsafe_allow_html=True)
 
-            # AI 버튼 (캐시 없을 때만)
-            if not _cached_ai and "GEMINI_API_KEY" in st.secrets:
-                _btn_key = f"ai_{_scanner_date}_{_code}"
-                if st.button(f"✦ AI 예측내용", key=_btn_key, type="primary"):
-                    st.session_state["_scanner_ai_trigger"] = _code
-                    st.rerun()
+        # AI 버튼 (Streamlit 위젯 — 캐시 없을 때만 표시)
+        if not _cached_ai and "GEMINI_API_KEY" in st.secrets:
+            _btn_key = f"ai_{_scanner_date}_{_code}"
+            if st.button(f"✦ AI 예측내용", key=_btn_key, type="primary"):
+                st.session_state["_scanner_ai_trigger"] = _code
+                st.rerun()
 
     st.markdown(
         '<div style="text-align:center;color:#4a5568;font-size:0.6rem;margin-top:1rem">'
         '📊 4-Pillar 퀀트모델: 모멘텀(35) + 평균회귀(20) + 추세품질(25) + 위험조정(20) = 100점'
-        ' · 10분 캐시 · AI 버튼 클릭 시 1회 호출</div>',
+        ' · 스캔 10분 캐시 · AI 버튼 클릭 시 1회 호출 후 캐시</div>',
         unsafe_allow_html=True
     )
+
+with _tab_scanner:
+    _render_scanner()
 
 
 with _tab_analysis:
