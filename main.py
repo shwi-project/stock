@@ -5,7 +5,6 @@ from prophet import Prophet
 from sklearn.ensemble import GradientBoostingRegressor
 import plotly.graph_objects as go
 from streamlit_lightweight_charts import renderLightweightCharts
-from streamlit_autorefresh import st_autorefresh
 import requests
 import json
 import html as html_mod
@@ -1292,10 +1291,8 @@ with _tab_analysis:
 # ─── 탭 2: 추천 종목 (모닝 스캐너) ── @st.fragment로 검색탭 영향 방지 ───
 @st.fragment
 def _render_scanner():
-    # 장중에만 autorefresh (fragment 내부 → 종목검색 탭 영향 없음)
-    if _is_market_open:
-        st_autorefresh(interval=600_000, limit=None, key="scanner_refresh")
-
+    # st_autorefresh 제거: 서드파티 컴포넌트라 fragment 스코프 무시하고 전체 페이지 리런 유발
+    # 대신 st.cache_data(ttl=600)의 자연 만료에 의존 — 탭 전환 시 캐시 만료되면 자동 재조회
     _scanner_date = now_kst().strftime("%Y%m%d")
     _scanner_today_str = now_kst().strftime("%Y년 %m월 %d일")
 
