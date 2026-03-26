@@ -687,6 +687,10 @@ def run_scanner(date_str: str) -> pd.DataFrame:
             prev_close = float(close.iloc[-2]) if n >= 2 else cp
             change_pct = round((cp - prev_close) / max(prev_close, 1) * 100, 2)
 
+            # ─── Price-RSI Divergence (half-split method) ───
+            _div_df = pd.DataFrame({"Close": close.values, "RSI": rsi_series.values})
+            _half_split_div = _detect_divergence(_div_df, lookback=20)
+
             # ─── 시그널 태그 생성 ───
             signals = []
             macd_cur = float(macd_hist.iloc[-1])
@@ -701,6 +705,8 @@ def run_scanner(date_str: str) -> pd.DataFrame:
             if stoch_score >= 0.8: signals.append("스토캐스틱↑")
             if obv_confirm >= 0.7: signals.append("OBV확인")
             if _divergence_tag: signals.append(_divergence_tag)
+            if _half_split_div == "bearish_div": signals.append("⚠RSI괴리")
+            if _half_split_div == "bullish_div": signals.append("💡RSI반전")
 
             raw_results.append({
                 "code": code, "price": int(cp), "change_pct": change_pct,
@@ -922,6 +928,52 @@ def get_kr_trading_days(start_date, count):
     return days
 
 
+def _ewma_volatility(returns, span=20):
+    """EWMA (Exponentially Weighted Moving Average) volatility forecast.
+    Returns annualized volatility as a decimal (e.g. 0.35 = 35%)."""
+    if returns is None or len(returns) < span:
+        return 0.20  # default 20% annualized vol
+    ewma_var = returns.ewm(span=span, adjust=False).var()
+    last_var = float(ewma_var.iloc[-1])
+    if np.isnan(last_var) or last_var <= 0:
+        return 0.20
+    annualized_vol = np.sqrt(last_var * 252)
+    return float(np.clip(annualized_vol, 0.05, 2.0))
+
+
+def _detect_divergence(df, lookback=20):
+    """Detect price-RSI divergence.
+    Returns 'bearish_div', 'bullish_div', or None."""
+    if len(df) < lookback:
+        return None
+    recent = df.tail(lookback)
+    price = recent["Close"]
+    rsi = recent["RSI"] if "RSI" in recent.columns else None
+    if rsi is None:
+        return None
+
+    mid = lookback // 2
+    # Check bearish: price higher high, RSI lower high
+    price_h1 = price.iloc[:mid].max()
+    price_h2 = price.iloc[mid:].max()
+    rsi_h1 = rsi.iloc[:mid].max()
+    rsi_h2 = rsi.iloc[mid:].max()
+
+    if price_h2 > price_h1 and rsi_h2 < rsi_h1 - 2:
+        return "bearish_div"
+
+    # Check bullish: price lower low, RSI higher low
+    price_l1 = price.iloc[:mid].min()
+    price_l2 = price.iloc[mid:].min()
+    rsi_l1 = rsi.iloc[:mid].min()
+    rsi_l2 = rsi.iloc[mid:].min()
+
+    if price_l2 < price_l1 and rsi_l2 > rsi_l1 + 2:
+        return "bullish_div"
+
+    return None
+
+
 def detect_regime(df: pd.DataFrame) -> str:
     """Detect market regime: 'bull', 'bear', or 'sideways'.
 
@@ -996,17 +1048,29 @@ def compute_prediction(stock_code: str, date_str: str, pred_days: int,
     df["vol_ratio"] = (df["Volume"] / df["Volume"].rolling(20).mean().replace(0, 1)).fillna(1.0)
     df["ma20_dist"] = ((close - close.rolling(20).mean()) / (close.rolling(20).mean() + 1e-9)).fillna(0)
 
-    POS_WORDS = {"상승","급등","신고가","호실적","흑자","수주","계약","승인","성장","돌파","매수","강세","반등","기대"}
-    NEG_WORDS = {"하락","급락","적자","부진","리스크","매도","약세","손실","취소","조사","소송","경고","우려","악화"}
+    # Sentiment keywords with magnitude weights (higher = stronger signal)
+    POS_WORDS = {
+        "상승": 1.0, "급등": 2.0, "신고가": 2.0, "호실적": 1.5, "흑자": 1.5,
+        "수주": 1.5, "계약": 1.0, "승인": 1.0, "성장": 1.0, "돌파": 1.5,
+        "매수": 1.0, "강세": 1.0, "반등": 1.0, "기대": 0.5,
+        "호재": 2.0, "흑자전환": 2.5, "배당": 1.5, "자사주": 1.5, "목표가상향": 2.0,
+    }
+    NEG_WORDS = {
+        "하락": 1.0, "급락": 2.0, "적자": 1.5, "부진": 1.0, "리스크": 1.0,
+        "매도": 1.0, "약세": 1.0, "손실": 1.5, "취소": 1.0, "조사": 1.0,
+        "소송": 1.5, "경고": 1.0, "우려": 0.5, "악화": 1.5,
+        "악재": 2.0, "신저가": 2.0, "하향": 1.5, "리콜": 2.0, "감자": 2.0,
+    }
 
     sentiment_score = 0.0
     if news_raw:
         scores = []
         for i, n in enumerate(news_raw):
             title = n.get("title", "")
-            pos = sum(1 for w in POS_WORDS if w in title)
-            neg = sum(1 for w in NEG_WORDS if w in title)
-            raw_s = (pos - neg) / max(pos + neg, 1) if (pos + neg) > 0 else 0.0
+            pos_w = sum(w for k, w in POS_WORDS.items() if k in title)
+            neg_w = sum(w for k, w in NEG_WORDS.items() if k in title)
+            total_w = pos_w + neg_w
+            raw_s = (pos_w - neg_w) / max(total_w, 1.0) if total_w > 0 else 0.0
             recency_w = 1.0 / (1 + i * 0.2)
             scores.append(raw_s * recency_w)
         sentiment_score = sum(scores) / sum(1.0 / (1 + i * 0.2) for i in range(len(scores))) if scores else 0.0
@@ -1163,28 +1227,28 @@ def compute_prediction(stock_code: str, date_str: str, pred_days: int,
                             _current_close * (1 - _hard_limit_pct),
                             _current_close * (1 + _hard_limit_pct))
 
+    # ── Price-RSI Divergence Adjustment ──
+    divergence_signal = _detect_divergence(df)
+    if divergence_signal == "bearish_div":
+        ensemble_pred *= 0.995  # reduce by 0.5%
+    elif divergence_signal == "bullish_div":
+        ensemble_pred *= 1.005  # increase by 0.5%
+    # Re-clamp after divergence adjustment
+    ensemble_pred = np.clip(ensemble_pred,
+                            _current_close * (1 - _hard_limit_pct),
+                            _current_close * (1 + _hard_limit_pct))
+
     fc_future_tmp["yhat"] = ensemble_pred
 
-    # Recalculate confidence intervals using spread from both Prophet and GBR
-    prophet_upper = float(fc_future_tmp.iloc[-1]["yhat_upper"])
-    prophet_lower = float(fc_future_tmp.iloc[-1]["yhat_lower"])
-    prophet_std = (prophet_upper - prophet_lower) / 3.92
+    # ── EWMA Volatility-based Dynamic Confidence Intervals ──
+    _daily_returns = df["Close"].pct_change().dropna()
+    ewma_vol = _ewma_volatility(_daily_returns, span=20)
+    _spread_pct = ewma_vol * np.sqrt(pred_days) * 1.5
+    _spread_pct = min(_spread_pct, _hard_limit_pct)  # cap at hard limit
 
-    # GBR std from training residuals
-    if len(df_gb) > 30 and gbr_pred != prophet_pred:
-        gbr_train_pred = gbr.predict(X_gb)
-        gbr_std = float(np.std(y_gb - gbr_train_pred))
-    else:
-        gbr_std = prophet_std
-
-    ensemble_std = np.sqrt(_w_prophet * prophet_std**2 + _w_gbr * gbr_std**2)
-    ensemble_spread = ensemble_std * 3.92  # ≈ 95% CI
-
-    _max_spread = _current_close * _hard_limit_pct * 2
-    ensemble_spread = min(ensemble_spread, _max_spread)
-    fc_future_tmp["yhat_upper"] = min(ensemble_pred + ensemble_spread * 0.5,
+    fc_future_tmp["yhat_upper"] = min(ensemble_pred * (1 + _spread_pct),
                                       _current_close * (1 + _hard_limit_pct))
-    fc_future_tmp["yhat_lower"] = max(ensemble_pred - ensemble_spread * 0.5,
+    fc_future_tmp["yhat_lower"] = max(ensemble_pred * (1 - _spread_pct),
                                       _current_close * (1 - _hard_limit_pct))
 
     # 백테스팅 — proper walk-forward cross-validation (no future data leakage)
@@ -1221,6 +1285,7 @@ def compute_prediction(stock_code: str, date_str: str, pred_days: int,
         "sentiment_score": sentiment_score,
         "backtest_mape": backtest_mape,
         "regime": regime,
+        "divergence": divergence_signal,
         "df_with_indicators": df.to_dict("records"),
     }
 
