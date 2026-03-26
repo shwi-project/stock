@@ -144,14 +144,14 @@ st.markdown("""
     }
     [data-testid="stFormSubmitButton"] > button {
         direction: ltr !important;
-        background: #1e2d45 !important;
-        border: none !important;
-        color: #e2e8f0 !important;
+        background: #1a2440 !important;
+        border: 1px solid rgba(99,102,241,0.25) !important;
+        color: #818cf8 !important;
         font-family: 'JetBrains Mono', monospace !important;
-        font-size: 0.48rem !important;
-        font-weight: 600 !important;
-        letter-spacing: 0 !important;
-        padding: 1px 5px !important;
+        font-size: 0.6rem !important;
+        font-weight: 700 !important;
+        letter-spacing: 0.3px !important;
+        padding: 2px 8px !important;
         height: auto !important;
         min-height: auto !important;
         max-height: none !important;
@@ -167,8 +167,9 @@ st.markdown("""
         line-height: 1.4 !important;
     }
     [data-testid="stFormSubmitButton"] > button:hover {
-        background: #2d3a55 !important;
-        color: #ffffff !important;
+        background: #243352 !important;
+        color: #a5b4fc !important;
+        border-color: rgba(99,102,241,0.5) !important;
     }
 
     .ai-box {
