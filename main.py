@@ -265,7 +265,7 @@ st.markdown("""
     .bottom-right { min-width: 0; }
     @media (max-width: 768px) { .bottom-wrap { grid-template-columns: 1fr; } }
     @media (max-width: 640px) {
-        .block-container { padding-left: 0.3rem !important; padding-right: 0.3rem !important; }
+        .block-container { padding-left: 0.8rem !important; padding-right: 0.8rem !important; }
         .metric-value { font-size: 0.82rem !important; }
         .metric-label { font-size: 0.55rem !important; }
         .ai-box { font-size: 0.82rem !important; }
@@ -1270,28 +1270,22 @@ def _render_scanner():
         _cached_ai = st.session_state[_scanner_ai_cache_key].get(_code)
         _score_cls = "score-high" if _score >= 60 else ("score-mid" if _score >= 40 else "score-low")
 
-        # AI 브리핑 HTML (캐시된 경우 — Gemini 포맷 유지)
+        # AI 브리핑 HTML (캐시된 경우 — 이스케이프 후 안전태그만 허용)
         _ai_html = ""
         if _cached_ai:
+            _safe_ai = html_mod.escape(str(_cached_ai))
+            # 안전한 태그만 복원
+            for _tag in ["br", "strong", "/strong", "b", "/b", "em", "/em"]:
+                _safe_ai = _safe_ai.replace(f"&lt;{_tag}&gt;", f"<{_tag}>")
+            _safe_ai = _safe_ai.replace("\n", "<br>")
             _ai_html = (
                 '<div style="margin-top:12px;padding:12px 14px;'
                 'background:linear-gradient(135deg,#0c1525 0%,#111d30 100%);'
                 'border:1px solid #1e3a5f;border-left:3px solid #3b82f6;border-radius:6px">'
                 '<div style="font-size:0.58rem;font-weight:600;color:#3b82f6;'
                 'letter-spacing:1.5px;margin-bottom:8px">✦ AI PREDICTION</div>'
-                f'<div style="font-size:0.76rem;line-height:1.8;color:#cbd5e0">{_cached_ai}</div>'
+                f'<div style="font-size:0.76rem;line-height:1.8;color:#cbd5e0">{_safe_ai}</div>'
                 '</div>'
-            )
-
-        # AI 버튼 배지 (카드 내부 종목명 옆 — 순수 HTML)
-        _ai_badge = ""
-        if not _cached_ai and "GEMINI_API_KEY" in st.secrets:
-            _ai_badge = (
-                '<span style="background:linear-gradient(135deg,#1a1f3a,#1e2d4a);'
-                'border:1px solid rgba(99,102,241,0.35);color:#c4b5fd;'
-                'font-family:\'Noto Sans KR\',sans-serif;font-size:0.48rem;font-weight:500;'
-                'letter-spacing:0.8px;padding:2px 8px;border-radius:5px;'
-                'margin-left:6px;white-space:nowrap">✦ AI 예측내용</span>'
             )
 
         # 카드 전체 HTML (st.columns 사용 안함)
@@ -1302,7 +1296,6 @@ def _render_scanner():
                     <span class="scanner-rank rank-{_rank if _rank <= 3 else 'other'}">{_rank}</span>
                     <span style="font-size:0.88rem;font-weight:600;color:#e2e8f0">{_row["name"]}</span>
                     <span style="font-size:0.68rem;color:#4a5568">{_code}</span>
-                    {_ai_badge}
                 </div>
                 <span class="scanner-score {_score_cls}">{_score:.0f}/100</span>
             </div>
