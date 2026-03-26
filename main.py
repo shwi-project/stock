@@ -1245,21 +1245,29 @@ with _tab_scanner:
             _cached_ai = st.session_state[_scanner_ai_cache_key].get(_code)
 
             with st.expander(f"{_medal}  {_row['name']}  ({_row['code']})  —  {_row['price']:,}원  {_chg_arrow}{abs(_row['change_pct']):.2f}%  ·  SCORE {_score}/100", expanded=False):
-                st.caption(f"📌 {_signals_txt}")
-                st.caption(f"RSI {_row['rsi']} · ADX {_row.get('adx',0)} · Sharpe {_row.get('sharpe',0)} · 거래량 {_row['vol_ratio']}x")
-                st.caption(f"모멘텀 **{_m:.0f}**/35 · 진입 **{_mr:.0f}**/20 · 추세 **{_t:.0f}**/25 · 리스크 **{_ra:.0f}**/20")
-
+                st.write(f"📌 {_signals_txt}")
+                st.write(f"RSI {_row['rsi']} · ADX {_row.get('adx',0)} · Sharpe {_row.get('sharpe',0)} · 거래량 {_row['vol_ratio']}x")
+                st.write(f"모멘텀 **{_m:.0f}**/35 · 진입 **{_mr:.0f}**/20 · 추세 **{_t:.0f}**/25 · 리스크 **{_ra:.0f}**/20")
                 if _cached_ai:
-                    st.info(_cached_ai)
-                elif "GEMINI_API_KEY" not in st.secrets:
-                    st.caption("🔑 Gemini API 키 미등록")
+                    st.success(_cached_ai)
+
+        # AI 브리핑 — expander 밖에서 처리 (레이아웃 충돌 방지)
+        if "GEMINI_API_KEY" in st.secrets:
+            st.divider()
+            _ai_options = [f"{r['name']} ({r['code']})" for _, r in _scanner_df.iterrows()]
+            _ai_select = st.selectbox("🤖 AI 브리핑 받을 종목 선택", _ai_options, index=0, key="scanner_ai_select")
+            _ai_sel_code = _scanner_df.iloc[_ai_options.index(_ai_select)]["code"] if _ai_select else None
+            if _ai_sel_code:
+                _sel_cached = st.session_state[_scanner_ai_cache_key].get(_ai_sel_code)
+                if _sel_cached:
+                    st.success(_sel_cached)
                 else:
-                    _btn_key = f"ai_btn_{_scanner_date}_{_code}"
-                    if st.button("🤖 AI 브리핑", key=_btn_key, use_container_width=True):
-                        with st.spinner("AI 분석 중..."):
-                            _ai_text = fetch_scanner_briefing(_code, _row.to_dict(), _scanner_date)
+                    if st.button("🤖 AI 브리핑 실행", key="scanner_ai_run", use_container_width=True):
+                        _sel_row = _scanner_df[_scanner_df["code"] == _ai_sel_code].iloc[0]
+                        with st.spinner(f"🤖 {_sel_row['name']} AI 분석 중..."):
+                            _ai_text = fetch_scanner_briefing(_ai_sel_code, _sel_row.to_dict(), _scanner_date)
                         if _ai_text:
-                            st.session_state[_scanner_ai_cache_key][_code] = _ai_text
+                            st.session_state[_scanner_ai_cache_key][_ai_sel_code] = _ai_text
                             st.rerun()
                         else:
                             st.error("AI 분석을 가져올 수 없습니다.")
