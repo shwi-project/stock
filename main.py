@@ -1395,12 +1395,7 @@ def _render_scanner():
     _now_ts = _time_mod.time()
     _elapsed_min = int((_now_ts - _cached_ts) / 60) if _cached_ts else 0
 
-    # 새로고침 버튼 (캐시 있을 때만 표시)
-    _force_refresh = False
     if _cached_df_ss is not None:
-        _force_refresh = st.button("🔄", key="scanner_refresh", help="추천 종목 새로고침")
-
-    if _cached_df_ss is not None and not _force_refresh:
         # 캐시 존재 → 즉시 사용 (블로킹 없음, 검색탭 영향 zero)
         _scanner_df = _cached_df_ss
     else:
