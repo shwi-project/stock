@@ -1235,59 +1235,42 @@ with _tab_scanner:
             _rank = _idx + 1
             _score = _row["score"]
             _chg_arrow = "▲" if _row["change_pct"] >= 0 else "▼"
-            _chg_color = "#fc5c5c" if _row["change_pct"] >= 0 else "#4d9fff"
             _signals_txt = " · ".join(_row["signals"])
             _medal = '🥇' if _rank==1 else '🥈' if _rank==2 else '🥉' if _rank==3 else '🏅'
-
-            # 필라 점수
             _m = _row.get("momentum", 0)
             _mr = _row.get("mean_rev", 0)
             _t = _row.get("trend", 0)
             _ra = _row.get("risk_adj", 0)
-            # 바 비율 (최소 5% 보장)
-            _total = max(_m + _mr + _t + _ra, 1)
-            _pm = max(_m / _total * 100, 5)
-            _pmr = max(_mr / _total * 100, 5)
-            _pt = max(_t / _total * 100, 5)
-            _pra = max(_ra / _total * 100, 5)
-
             _code = _row["code"]
             _cached_ai = st.session_state[_scanner_ai_cache_key].get(_code)
 
-            # AI 브리핑 캐시 확인
-            _ai_section = ""
-            if _cached_ai:
-                _ai_section = f'<div style="margin-top:10px;padding:10px 12px;background:#131825;border-radius:8px;border-left:3px solid #4d9fff;font-size:0.78rem;line-height:1.8;color:#cbd5e0">{_cached_ai}</div>'
-
             with st.expander(f"{_medal}  {_row['name']}  ({_row['code']})  —  {_row['price']:,}원  {_chg_arrow}{abs(_row['change_pct']):.2f}%  ·  SCORE {_score}/100", expanded=False):
-                # 전체 내용을 하나의 HTML 블록으로 렌더링 (CSS 충돌 방지)
-                st.markdown(f'''<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
-<div style="font-size:0.72rem;color:#a0aec0;margin-bottom:6px">{_signals_txt}</div>
-<div style="font-size:0.65rem;color:#4a5568;margin-bottom:8px">RSI {_row["rsi"]} · ADX {_row.get("adx",0)} · Sharpe {_row.get("sharpe",0)} · 거래량 {_row["vol_ratio"]}x</div>
-<div style="display:flex;gap:3px;margin-bottom:4px;font-size:0.62rem;font-family:monospace;height:24px;line-height:24px">
-<div style="width:{_pm:.0f}%;background:#3a7bd5;color:#fff;text-align:center;border-radius:4px 0 0 4px;overflow:hidden;white-space:nowrap">모멘텀 {_m:.0f}</div>
-<div style="width:{_pmr:.0f}%;background:#e8961f;color:#fff;text-align:center;overflow:hidden;white-space:nowrap">진입 {_mr:.0f}</div>
-<div style="width:{_pt:.0f}%;background:#2d9f99;color:#fff;text-align:center;overflow:hidden;white-space:nowrap">추세 {_t:.0f}</div>
-<div style="width:{_pra:.0f}%;background:#805ad5;color:#fff;text-align:center;border-radius:0 4px 4px 0;overflow:hidden;white-space:nowrap">리스크 {_ra:.0f}</div>
-</div>
-<div style="font-size:0.58rem;color:#4a5568;margin-bottom:2px">모멘텀(/{35}) · 진입(/{20}) · 추세(/{25}) · 리스크(/{20})</div>
-{_ai_section}
-</div>''', unsafe_allow_html=True)
+                # 네이티브 Streamlit만 사용 (HTML 없음 = CSS 충돌 없음)
+                st.caption(f"📌 {_signals_txt}")
+                st.caption(f"RSI {_row['rsi']} · ADX {_row.get('adx',0)} · Sharpe {_row.get('sharpe',0)} · 거래량 {_row['vol_ratio']}x")
 
-                # AI 브리핑: 버튼 (캐시 없을 때만 표시)
-                if not _cached_ai:
-                    if "GEMINI_API_KEY" not in st.secrets:
-                        st.caption("🔑 Gemini API 키 미등록")
-                    else:
-                        _btn_key = f"ai_btn_{_scanner_date}_{_code}"
-                        if st.button(f"🤖 AI 브리핑", key=_btn_key):
-                            with st.spinner("AI 분석 중..."):
-                                _ai_text = fetch_scanner_briefing(_code, _row.to_dict(), _scanner_date)
-                            if _ai_text:
-                                st.session_state[_scanner_ai_cache_key][_code] = _ai_text
-                                st.rerun()
-                            else:
-                                st.error("AI 분석을 가져올 수 없습니다.")
+                # 4-Pillar 점수 (columns로 표현)
+                _c1, _c2, _c3, _c4 = st.columns(4)
+                _c1.metric("모멘텀", f"{_m:.0f}/35")
+                _c2.metric("진입", f"{_mr:.0f}/20")
+                _c3.metric("추세", f"{_t:.0f}/25")
+                _c4.metric("리스크", f"{_ra:.0f}/20")
+
+                # AI 브리핑
+                if _cached_ai:
+                    st.info(_cached_ai)
+                elif "GEMINI_API_KEY" not in st.secrets:
+                    st.caption("🔑 Gemini API 키 미등록")
+                else:
+                    _btn_key = f"ai_btn_{_scanner_date}_{_code}"
+                    if st.button(f"🤖 AI 브리핑", key=_btn_key):
+                        with st.spinner("AI 분석 중..."):
+                            _ai_text = fetch_scanner_briefing(_code, _row.to_dict(), _scanner_date)
+                        if _ai_text:
+                            st.session_state[_scanner_ai_cache_key][_code] = _ai_text
+                            st.rerun()
+                        else:
+                            st.error("AI 분석을 가져올 수 없습니다.")
 
     st.markdown(
         '<div style="text-align:center;color:#4a5568;font-size:0.65rem;margin-top:1rem">'
