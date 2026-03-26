@@ -132,39 +132,39 @@ st.markdown("""
     [data-testid="stForm"] [data-testid="stElementContainer"] {
         margin-bottom: 0 !important;
     }
-    /* 스캐너 AI 버튼 (form submit) — 소형 뱃지 스타일 */
+    /* 스캐너 AI 버튼 (form submit) — 미니 뱃지 */
     [data-testid="stFormSubmitButton"] > button {
-        background: rgba(99,102,241,0.08) !important;
-        border: 1px solid rgba(99,102,241,0.25) !important;
+        background: rgba(99,102,241,0.1) !important;
+        border: 1px solid rgba(99,102,241,0.3) !important;
         color: #a5b4fc !important;
-        font-family: 'Noto Sans KR', sans-serif !important;
-        font-size: 0.45rem !important;
+        font-family: 'JetBrains Mono', monospace !important;
+        font-size: 0.52rem !important;
         font-weight: 600 !important;
-        letter-spacing: 0.5px !important;
-        padding: 0 7px !important;
-        height: 18px !important;
-        min-height: 18px !important;
-        max-height: 18px !important;
-        border-radius: 9px !important;
+        letter-spacing: 0.3px !important;
+        padding: 0 8px !important;
+        height: 20px !important;
+        min-height: 20px !important;
+        max-height: 20px !important;
+        border-radius: 10px !important;
         transition: all 0.2s ease !important;
         width: auto !important;
         min-width: auto !important;
-        max-width: 100px !important;
+        max-width: 60px !important;
         white-space: nowrap !important;
-        margin-top: 0 !important;
-        margin-bottom: 0 !important;
+        margin: 0 !important;
         cursor: pointer !important;
     }
     [data-testid="stFormSubmitButton"] > button:hover {
-        background: rgba(99,102,241,0.18) !important;
-        border-color: rgba(139,92,246,0.5) !important;
+        background: rgba(99,102,241,0.22) !important;
+        border-color: rgba(139,92,246,0.55) !important;
         color: #e0d4ff !important;
-        box-shadow: 0 0 8px rgba(139,92,246,0.12) !important;
+        box-shadow: 0 0 8px rgba(139,92,246,0.15) !important;
     }
+    /* form 버튼 카드 상단 정렬 */
     [data-testid="stFormSubmitButton"] {
         display: flex !important;
-        align-items: center !important;
-        height: 28px !important;
+        align-items: flex-start !important;
+        padding-top: 12px !important;
     }
 
     .ai-box {
@@ -1286,34 +1286,18 @@ def _render_scanner():
         _cached_ai = st.session_state[_scanner_ai_cache_key].get(_code)
         _score_cls = "score-high" if _score >= 60 else ("score-mid" if _score >= 40 else "score-low")
 
-        # ── 종목명 줄: [이름+코드+스코어] [AI버튼] [빈여백] — 왼쪽 밀착 ──
+        # ── 통합 카드: HTML 하나로 렌더 + AI 버튼만 별도 form ──
         _submitted = False
-        _col_info, _col_btn, _col_spacer = st.columns([4.5, 1.5, 4])
-        with _col_info:
-            st.markdown(
-                f'<div style="display:flex;align-items:center;gap:8px;padding:4px 0">'
-                f'<span class="scanner-rank rank-{_rank if _rank <= 3 else "other"}">{_rank}</span>'
-                f'<span style="font-size:0.88rem;font-weight:600;color:#e2e8f0">{_row["name"]}</span>'
-                f'<span style="font-size:0.68rem;color:#4a5568">{_code}</span>'
-                f'<span class="scanner-score {_score_cls}">{_score:.0f}/100</span>'
-                f'</div>',
-                unsafe_allow_html=True
-            )
-        with _col_btn:
-            if not _cached_ai and "GEMINI_API_KEY" in st.secrets:
-                with st.form(key=f"scanner_{_code}", clear_on_submit=False, border=False):
-                    _submitted = st.form_submit_button("✦ AI 예측내용")
-            elif _cached_ai:
-                st.markdown(
-                    '<div style="display:flex;align-items:center;height:28px">'
-                    '<span style="font-size:0.42rem;color:rgba(165,180,252,0.5);letter-spacing:0.3px">✦ AI</span>'
-                    '</div>',
-                    unsafe_allow_html=True
-                )
 
-        # ── 카드 본문 (HTML) ──
-        st.markdown(f'''
-        <div class="scanner-card" style="margin-top:-8px">
+        # 카드 전체 HTML (이름+스코어+가격+시그널+바 통합)
+        _card_html = f'''
+        <div class="scanner-card">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+                <span class="scanner-rank rank-{_rank if _rank <= 3 else "other"}">{_rank}</span>
+                <span style="font-size:0.88rem;font-weight:600;color:#e2e8f0">{_row["name"]}</span>
+                <span style="font-size:0.68rem;color:#4a5568">{_code}</span>
+                <span class="scanner-score {_score_cls}">{_score:.0f}/100</span>
+            </div>
             <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:8px">
                 <span style="font-family:'JetBrains Mono',monospace;font-size:1rem;font-weight:600;color:#e2e8f0">{_row["price"]:,}원</span>
                 <span style="font-size:0.8rem;color:{_chg_color};font-weight:600">{_chg_arrow} {abs(_row["change_pct"]):.2f}%</span>
@@ -1332,7 +1316,19 @@ def _render_scanner():
             </div>
             <div style="font-size:0.55rem;color:#4a5568">모멘텀 /35 · 진입 /20 · 추세 /25 · 리스크 /20</div>
         </div>
-        ''', unsafe_allow_html=True)
+        '''
+
+        # AI 버튼이 필요하면 카드 옆에 최소 컬럼으로 배치
+        _need_ai_btn = not _cached_ai and "GEMINI_API_KEY" in st.secrets
+        if _need_ai_btn:
+            _c_card, _c_ai = st.columns([9, 1])
+            with _c_card:
+                st.markdown(_card_html, unsafe_allow_html=True)
+            with _c_ai:
+                with st.form(key=f"scanner_{_code}", clear_on_submit=False, border=False):
+                    _submitted = st.form_submit_button("AI")
+        else:
+            st.markdown(_card_html, unsafe_allow_html=True)
 
         # AI 결과 (카드 HTML 밖 — Gemini 응답이 카드를 깨뜨리지 않음)
         if _cached_ai:
