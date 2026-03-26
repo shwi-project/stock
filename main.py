@@ -122,15 +122,14 @@ st.markdown("""
         align-items: flex-end !important;
     }
 
-    /* 스캐너 AI form — 카드 뒤, 카드 하단 우측에 겹침 */
+    /* 스캐너 AI form — 카드 앞, height:0, top으로 헤더 줄에 고정 (카드 높이 무관) */
     [data-testid="stForm"] {
         border: none !important;
         background: transparent !important;
         height: 0 !important;
         overflow: visible !important;
         padding: 0 !important;
-        margin-top: -163px !important;
-        margin-bottom: 138px !important;
+        margin: 0 !important;
         position: relative !important;
         z-index: 10 !important;
     }
@@ -162,6 +161,8 @@ st.markdown("""
         min-width: auto !important;
         white-space: nowrap !important;
         cursor: pointer !important;
+        position: relative !important;
+        top: 24px !important;
         margin-right: 16px !important;
     }
     [data-testid="stFormSubmitButton"] > button:hover {
@@ -1322,13 +1323,13 @@ def _render_scanner():
         </div>
         '''
 
-        # 카드 렌더
-        st.markdown(_card_html, unsafe_allow_html=True)
-
-        # AI 버튼 (카드 뒤, CSS로 카드 하단 우측에 겹침)
+        # AI 버튼 (카드 앞에 렌더, height:0 + top으로 카드 헤더에 고정)
         if not _cached_ai and "GEMINI_API_KEY" in st.secrets:
             with st.form(key=f"scanner_{_code}", clear_on_submit=False, border=False):
                 _submitted = st.form_submit_button("✦ AI 분석")
+
+        # 카드 렌더
+        st.markdown(_card_html, unsafe_allow_html=True)
 
         # AI 결과 (카드 HTML 밖 — Gemini 응답이 카드를 깨뜨리지 않음)
         if _cached_ai:
