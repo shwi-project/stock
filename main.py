@@ -343,152 +343,359 @@ SCANNER_UNIVERSE = [
 
 
 # ─────────────────────────────────────────────
-# 모닝 스캐너: 기술지표 스코어링
+# 멀티팩터 퀀트 스캐너 (학술 기반 4-Pillar 모델)
+# Momentum(35) + MeanReversion(20) + TrendQuality(25) + RiskAdjusted(20) = 100
 # ─────────────────────────────────────────────
-@st.cache_data(ttl=600, show_spinner=False)
-def run_scanner(date_str: str) -> pd.DataFrame:
-    """주요 종목들의 기술지표를 분석하고 매수 시그널 점수를 매긴다."""
+
+def _fetch_ohlcv(code: str, start_str: str, date_str: str):
+    """FDR 우선, pykrx 폴백으로 OHLCV 가져오기."""
     try:
         import FinanceDataReader as fdr
-    except ImportError:
-        fdr = None
+        tmp = fdr.DataReader(code, start_str)
+        if tmp is not None and len(tmp) > 60:
+            tmp = tmp.reset_index()
+            ohlcv = tmp[["Date","Open","High","Low","Close","Volume"]].copy()
+            for c in ["Close","Volume","High","Low","Open"]:
+                ohlcv[c] = ohlcv[c].astype(float)
+            return ohlcv
+    except Exception:
+        pass
     try:
         from pykrx import stock as krx_stock
-    except ImportError:
-        krx_stock = None
+        start_d = (datetime.strptime(date_str, "%Y%m%d") - timedelta(days=180)).strftime("%Y%m%d")
+        tmp = krx_stock.get_market_ohlcv_by_date(start_d, date_str, code)
+        if tmp is not None and len(tmp) > 60:
+            tmp = tmp.reset_index()
+            return pd.DataFrame({
+                "Date": tmp.iloc[:, 0],
+                "Open": tmp["시가"].astype(float), "High": tmp["고가"].astype(float),
+                "Low": tmp["저가"].astype(float), "Close": tmp["종가"].astype(float),
+                "Volume": tmp["거래량"].astype(float),
+            })
+    except Exception:
+        pass
+    return None
 
-    if not fdr and not krx_stock:
-        return pd.DataFrame()
 
-    results = []
-    start_str = (datetime.strptime(date_str, "%Y%m%d") - timedelta(days=180)).strftime("%Y-%m-%d")
+def _calc_rsi(close: pd.Series, period: int = 14) -> pd.Series:
+    delta = close.diff()
+    gain = delta.clip(lower=0).rolling(period).mean()
+    loss = (-delta.clip(upper=0)).rolling(period).mean()
+    rs = gain / loss.replace(0, 1e-9)
+    return (100 - 100 / (1 + rs)).fillna(50)
 
+
+def _calc_adx(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> dict:
+    """ADX, +DI, -DI 계산 (Wilder's smoothing)."""
+    prev_high = high.shift(1)
+    prev_low = low.shift(1)
+    prev_close = close.shift(1)
+    tr = pd.concat([high - low, (high - prev_close).abs(), (low - prev_close).abs()], axis=1).max(axis=1)
+    plus_dm = ((high - prev_high).clip(lower=0)).where(high - prev_high > prev_low - low, 0)
+    minus_dm = ((prev_low - low).clip(lower=0)).where(prev_low - low > high - prev_high, 0)
+    atr = tr.ewm(alpha=1/period, adjust=False).mean()
+    plus_di = 100 * plus_dm.ewm(alpha=1/period, adjust=False).mean() / atr.replace(0, 1e-9)
+    minus_di = 100 * minus_dm.ewm(alpha=1/period, adjust=False).mean() / atr.replace(0, 1e-9)
+    dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, 1e-9)
+    adx = dx.ewm(alpha=1/period, adjust=False).mean()
+    return {"adx": float(adx.iloc[-1]), "plus_di": float(plus_di.iloc[-1]), "minus_di": float(minus_di.iloc[-1])}
+
+
+def _calc_stochastic(high: pd.Series, low: pd.Series, close: pd.Series, k_period: int = 14, d_period: int = 3) -> dict:
+    lowest = low.rolling(k_period).min()
+    highest = high.rolling(k_period).max()
+    k = 100 * (close - lowest) / (highest - lowest).replace(0, 1e-9)
+    d = k.rolling(d_period).mean()
+    return {"k": float(k.iloc[-1]), "d": float(d.iloc[-1]),
+            "k_prev": float(k.iloc[-2]) if len(k) >= 2 else 50.0}
+
+
+def _calc_ichimoku(high: pd.Series, low: pd.Series, close: pd.Series) -> dict:
+    """이치모쿠 클라우드 시그널 (9/26/52)."""
+    def _mid(s, p): return (s.rolling(p).max() + s.rolling(p).min()) / 2
+    tenkan = _mid(close, 9)
+    kijun = _mid(close, 26)
+    senkou_a = (tenkan + kijun) / 2
+    senkou_b = _mid(close, 52)
+    cur_price = float(close.iloc[-1])
+    # 현재 구름 = 26봉 전에 계산된 값
+    cloud_top = max(float(senkou_a.iloc[-26]), float(senkou_b.iloc[-26])) if len(senkou_a) >= 26 else cur_price
+    cloud_bot = min(float(senkou_a.iloc[-26]), float(senkou_b.iloc[-26])) if len(senkou_a) >= 26 else cur_price
+    above_cloud = cur_price > cloud_top
+    tenkan_above_kijun = float(tenkan.iloc[-1]) > float(kijun.iloc[-1]) if len(tenkan.dropna()) > 0 and len(kijun.dropna()) > 0 else False
+    future_bullish = float(senkou_a.iloc[-1]) > float(senkou_b.iloc[-1]) if len(senkou_a.dropna()) > 0 and len(senkou_b.dropna()) > 0 else False
+    return {"above_cloud": above_cloud, "tenkan_kijun": tenkan_above_kijun, "future_bullish": future_bullish}
+
+
+def _calc_bollinger(close: pd.Series, period: int = 20, std_mult: float = 2.0) -> dict:
+    ma = close.rolling(period).mean()
+    std = close.rolling(period).std()
+    upper = ma + std_mult * std
+    lower = ma - std_mult * std
+    bandwidth = ((upper - lower) / ma.replace(0, 1e-9))
+    pct_b = (close - lower) / (upper - lower).replace(0, 1e-9)
+    # Squeeze: 현재 bandwidth가 120일 내 최저에 가까운지
+    bw_min_120 = bandwidth.rolling(min(120, len(bandwidth))).min()
+    is_squeeze = float(bandwidth.iloc[-1]) <= float(bw_min_120.iloc[-1]) * 1.1 if len(bw_min_120.dropna()) > 0 else False
+    above_mid = float(close.iloc[-1]) > float(ma.iloc[-1]) if len(ma.dropna()) > 0 else False
+    return {"pct_b": float(pct_b.iloc[-1]), "bandwidth": float(bandwidth.iloc[-1]),
+            "is_squeeze": is_squeeze, "above_mid": above_mid}
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def run_scanner(date_str: str) -> pd.DataFrame:
+    """멀티팩터 퀀트 스캐너: 4-Pillar 모델로 종목 스코어링."""
+    start_str = (datetime.strptime(date_str, "%Y%m%d") - timedelta(days=250)).strftime("%Y-%m-%d")
+
+    # ── KOSPI 벤치마크 데이터 ──
+    kospi_return_60d = 0.0
+    try:
+        import FinanceDataReader as fdr
+        _kospi = fdr.DataReader("KS11", start_str)
+        if _kospi is not None and len(_kospi) >= 60:
+            _kc = _kospi["Close"].astype(float)
+            kospi_return_60d = float(_kc.iloc[-1] / _kc.iloc[-60] - 1)
+    except Exception:
+        pass
+
+    # ── Pass 1: 모든 종목 raw factor 수집 ──
+    raw_results = []
     for code in SCANNER_UNIVERSE:
         try:
-            # FDR 1차, pykrx 폴백
-            ohlcv = None
-            if fdr:
-                try:
-                    tmp = fdr.DataReader(code, start_str)
-                    if tmp is not None and len(tmp) > 60:
-                        tmp = tmp.reset_index()
-                        ohlcv = tmp[["Date","Open","High","Low","Close","Volume"]].copy()
-                        ohlcv["Close"] = ohlcv["Close"].astype(float)
-                        ohlcv["Volume"] = ohlcv["Volume"].astype(float)
-                        ohlcv["High"] = ohlcv["High"].astype(float)
-                        ohlcv["Low"] = ohlcv["Low"].astype(float)
-                except Exception:
-                    pass
-
-            if ohlcv is None and krx_stock:
-                try:
-                    end_d = date_str
-                    start_d = (datetime.strptime(date_str, "%Y%m%d") - timedelta(days=180)).strftime("%Y%m%d")
-                    tmp = krx_stock.get_market_ohlcv_by_date(start_d, end_d, code)
-                    if tmp is not None and len(tmp) > 60:
-                        tmp = tmp.reset_index()
-                        ohlcv = pd.DataFrame({
-                            "Date": tmp.iloc[:, 0],
-                            "Open": tmp["시가"].astype(float),
-                            "High": tmp["고가"].astype(float),
-                            "Low": tmp["저가"].astype(float),
-                            "Close": tmp["종가"].astype(float),
-                            "Volume": tmp["거래량"].astype(float),
-                        })
-                except Exception:
-                    pass
-
+            ohlcv = _fetch_ohlcv(code, start_str, date_str)
             if ohlcv is None or len(ohlcv) < 60:
                 continue
-
             close = ohlcv["Close"]
+            high = ohlcv["High"]
+            low = ohlcv["Low"]
             volume = ohlcv["Volume"]
-
             if float(close.iloc[-1]) <= 0:
                 continue
 
-            # RSI 14
-            delta = close.diff()
-            gain = delta.clip(lower=0).rolling(14).mean()
-            loss = (-delta.clip(upper=0)).rolling(14).mean()
-            rs = gain / loss.replace(0, 1e-9)
-            rsi = (100 - 100 / (1 + rs)).fillna(50)
-            cur_rsi = float(rsi.iloc[-1])
-            min_rsi_3d = float(rsi.iloc[-3:].min()) if len(rsi) >= 3 else cur_rsi
+            returns = close.pct_change().dropna()
+            n = len(close)
 
-            # MA 골든크로스 (5MA > 20MA, 3일 이내 교차)
-            ma5 = close.rolling(5).mean()
-            ma20 = close.rolling(20).mean()
-            golden_cross = False
-            if len(ma5.dropna()) >= 3 and len(ma20.dropna()) >= 3:
-                recent = ma5.iloc[-3:] - ma20.iloc[-3:]
-                if float(recent.iloc[-1]) > 0 and float(recent.iloc[0]) <= 0:
-                    golden_cross = True
+            # ─── PILLAR 1: MOMENTUM ───
+            # 1a. 상대강도 vs KOSPI (60일)
+            stock_return_60d = float(close.iloc[-1] / close.iloc[-60] - 1) if n >= 60 else 0.0
+            rel_strength = stock_return_60d - kospi_return_60d
 
-            # 거래량 돌파
-            vol_avg20 = float(volume.rolling(20).mean().iloc[-1]) if len(volume) >= 20 else 1
-            vol_ratio = float(volume.iloc[-1]) / max(vol_avg20, 1)
-
-            # MACD
+            # 1b. MACD 히스토그램 기울기 (5일)
             ema12 = close.ewm(span=12, adjust=False).mean()
             ema26 = close.ewm(span=26, adjust=False).mean()
-            macd_hist = float((ema12 - ema26).iloc[-1] - (ema12 - ema26).ewm(span=9, adjust=False).mean().iloc[-1])
+            macd_line = ema12 - ema26
+            signal_line = macd_line.ewm(span=9, adjust=False).mean()
+            macd_hist = macd_line - signal_line
+            macd_slope = float(macd_hist.iloc[-1] - macd_hist.iloc[-5]) / 5.0 if n >= 30 else 0.0
 
-            # 점수 계산
-            score = 0.0
+            # 1c. 가격 vs MA 캐스케이드 (5/20/60)
+            ma5 = close.rolling(5).mean()
+            ma20 = close.rolling(20).mean()
+            ma60 = close.rolling(60).mean()
+            cp = float(close.iloc[-1])
+            ma_cascade = 0.0
+            if len(ma5.dropna()) > 0 and cp > float(ma5.iloc[-1]):   ma_cascade += 0.33
+            if len(ma20.dropna()) > 0 and cp > float(ma20.iloc[-1]): ma_cascade += 0.33
+            if len(ma60.dropna()) > 0 and cp > float(ma60.iloc[-1]): ma_cascade += 0.34
+
+            # 1d. ROC 20일
+            roc_20 = float(close.iloc[-1] / close.iloc[-20] - 1) if n >= 20 else 0.0
+
+            # 1e. OBV 추세 확인
+            obv = (volume * ((close.diff() > 0).astype(int) * 2 - 1)).cumsum()
+            obv_slope_20 = float(obv.iloc[-1] - obv.iloc[-20]) if n >= 20 else 0.0
+            price_slope_20 = float(close.iloc[-1] - close.iloc[-20]) if n >= 20 else 0.0
+            if price_slope_20 > 0 and obv_slope_20 > 0:
+                obv_confirm = 1.0  # 가격↑ 거래량↑ 동조
+            elif price_slope_20 < 0 and obv_slope_20 > 0:
+                obv_confirm = 0.7  # 강세 다이버전스
+            elif price_slope_20 > 0 and obv_slope_20 < 0:
+                obv_confirm = 0.2  # 약세 다이버전스
+            else:
+                obv_confirm = 0.4
+
+            # ─── PILLAR 2: MEAN REVERSION ───
+            rsi_series = _calc_rsi(close)
+            cur_rsi = float(rsi_series.iloc[-1])
+            # RSI 존 점수 (30-40 최적 반등 구간)
+            if 30 <= cur_rsi <= 40:
+                rsi_zone = 1.0
+            elif 20 <= cur_rsi < 30:
+                rsi_zone = 0.7
+            elif 40 < cur_rsi <= 50:
+                rsi_zone = 0.6
+            elif 50 < cur_rsi <= 60:
+                rsi_zone = 0.3
+            else:
+                rsi_zone = 0.0  # 과매수(>70) 또는 극단적 과매도(<20)
+
+            bb = _calc_bollinger(close)
+            pct_b = bb["pct_b"]
+            if pct_b <= 0.2:
+                bb_score = 1.0
+            elif pct_b <= 0.4:
+                bb_score = 0.6
+            elif pct_b <= 0.6:
+                bb_score = 0.3
+            else:
+                bb_score = 0.0
+
+            stoch = _calc_stochastic(high, low, close)
+            stoch_score = 0.0
+            if stoch["k"] < 30 and stoch["k"] > stoch["d"] and stoch["k_prev"] <= stoch["d"]:
+                stoch_score = 1.0  # 과매도 구간 골든크로스
+            elif stoch["k"] > stoch["d"]:
+                stoch_score = 0.3
+
+            # ─── PILLAR 3: TREND QUALITY ───
+            adx_data = _calc_adx(high, low, close)
+            if adx_data["adx"] > 25 and adx_data["plus_di"] > adx_data["minus_di"]:
+                adx_score = 1.0  # 강한 상승추세
+            elif adx_data["adx"] > 20 and adx_data["plus_di"] > adx_data["minus_di"]:
+                adx_score = 0.6
+            elif adx_data["adx"] < 20:
+                adx_score = 0.2  # 추세 없음
+            else:
+                adx_score = 0.0  # 하락추세
+
+            ichimoku = _calc_ichimoku(high, low, close) if n >= 52 else {"above_cloud": False, "tenkan_kijun": False, "future_bullish": False}
+            ichi_score = (0.4 if ichimoku["above_cloud"] else 0) + \
+                         (0.3 if ichimoku["tenkan_kijun"] else 0) + \
+                         (0.3 if ichimoku["future_bullish"] else 0)
+
+            vol_avg20 = float(volume.rolling(20).mean().iloc[-1]) if n >= 20 else 1
+            vol_ratio = float(volume.iloc[-1]) / max(vol_avg20, 1)
+            price_up = cp > float(close.iloc[-2]) if n >= 2 else False
+            if vol_ratio > 2.0 and price_up:
+                vol_confirm = 1.0
+            elif vol_ratio > 1.5 and price_up:
+                vol_confirm = 0.7
+            elif vol_ratio > 2.0 and not price_up:
+                vol_confirm = 0.1  # 분배 (매도)
+            else:
+                vol_confirm = 0.3
+
+            squeeze_score = 0.0
+            if bb["is_squeeze"] and bb["above_mid"]:
+                squeeze_score = 1.0
+            elif bb["is_squeeze"]:
+                squeeze_score = 0.4
+
+            # ─── PILLAR 4: RISK-ADJUSTED ───
+            if len(returns) >= 60:
+                r60 = returns.iloc[-60:]
+                sharpe_60d = float(r60.mean() / r60.std() * np.sqrt(252)) if r60.std() > 0 else 0.0
+                downside = r60[r60 < 0]
+                downside_dev = float(downside.std()) if len(downside) > 2 else 0.0
+            else:
+                sharpe_60d = 0.0
+                downside_dev = 0.01
+
+            atr14 = pd.concat([high - low, (high - close.shift(1)).abs(), (low - close.shift(1)).abs()], axis=1).max(axis=1).rolling(14).mean()
+            atr_pct = float(atr14.iloc[-1]) / cp if cp > 0 else 0.0
+
+            prev_close = float(close.iloc[-2]) if n >= 2 else cp
+            change_pct = round((cp - prev_close) / max(prev_close, 1) * 100, 2)
+
+            # ─── 시그널 태그 생성 ───
             signals = []
+            macd_cur = float(macd_hist.iloc[-1])
+            if rel_strength > 0.05: signals.append("상대강도↑")
+            if adx_data["adx"] > 25 and adx_data["plus_di"] > adx_data["minus_di"]: signals.append(f"ADX{adx_data['adx']:.0f}")
+            if vol_ratio > 1.5 and price_up: signals.append(f"거래량{vol_ratio:.1f}x")
+            if bb["is_squeeze"]: signals.append("스퀴즈")
+            if 20 <= cur_rsi <= 40: signals.append(f"RSI{cur_rsi:.0f}")
+            if ichimoku["above_cloud"]: signals.append("구름↑")
+            if ma_cascade >= 0.66: signals.append("MA정배열")
+            if macd_cur > 0 and macd_slope > 0: signals.append("MACD▲")
+            if stoch_score >= 0.8: signals.append("스토캐스틱↑")
+            if obv_confirm >= 0.7: signals.append("OBV확인")
 
-            # RSI 과매도 반등 (25점)
-            if min_rsi_3d < 35 and cur_rsi > min_rsi_3d:
-                rsi_score = min((35 - min_rsi_3d) / 20, 1.0) * 25
-                score += rsi_score
-                signals.append("RSI반등")
-
-            # 골든크로스 (20점)
-            if golden_cross:
-                score += 20
-                signals.append("골든크로스")
-
-            # 거래량 돌파 (25점)
-            if vol_ratio > 1.5:
-                vol_score = min(vol_ratio / 4, 1.0) * 25
-                score += vol_score
-                signals.append(f"거래량{vol_ratio:.1f}x")
-
-            # MACD 상승전환 (15점)
-            if macd_hist > 0:
-                score += 15
-                signals.append("MACD▲")
-
-            # MA20 위 위치 (10점)
-            if len(ma20.dropna()) > 0 and float(close.iloc[-1]) > float(ma20.iloc[-1]):
-                score += 10
-                signals.append("MA20↑")
-
-            # 최소 시그널 1개 이상
-            if score < 10:
-                continue
-
-            name = code  # 이름은 외부에서 매핑
-            prev_close = float(close.iloc[-2]) if len(close) >= 2 else float(close.iloc[-1])
-            results.append({
-                "code": code,
-                "name": name,
-                "price": int(close.iloc[-1]),
-                "change_pct": round((float(close.iloc[-1]) - prev_close) / max(prev_close, 1) * 100, 2),
-                "rsi": round(cur_rsi, 1),
-                "vol_ratio": round(vol_ratio, 1),
-                "macd_hist": round(macd_hist, 2),
-                "score": round(score, 1),
+            raw_results.append({
+                "code": code, "price": int(cp), "change_pct": change_pct,
+                "rsi": round(cur_rsi, 1), "vol_ratio": round(vol_ratio, 1),
+                "adx": round(adx_data["adx"], 1), "sharpe": round(sharpe_60d, 2),
+                "macd_hist": round(macd_cur, 2),
                 "signals": signals,
+                # Raw scores (Pillar 1 - 상대적 비교 필요한 것들)
+                "_rel_strength": rel_strength, "_roc_20": roc_20,
+                "_sharpe_60d": sharpe_60d, "_atr_pct": atr_pct, "_downside_dev": downside_dev,
+                # Raw scores (Pillar별 절대점수)
+                "_macd_slope": macd_slope, "_ma_cascade": ma_cascade, "_obv_confirm": obv_confirm,
+                "_rsi_zone": rsi_zone, "_bb_score": bb_score, "_stoch_score": stoch_score,
+                "_adx_score": adx_score, "_ichi_score": ichi_score,
+                "_vol_confirm": vol_confirm, "_squeeze_score": squeeze_score,
             })
         except Exception:
             continue
 
-    if not results:
+    if not raw_results:
         return pd.DataFrame()
 
-    df_result = pd.DataFrame(results).sort_values("score", ascending=False).head(5).reset_index(drop=True)
+    # ── Pass 2: 교차 비교 (Percentile Ranking) ──
+    df_raw = pd.DataFrame(raw_results)
+    n_stocks = len(df_raw)
+
+    # 높을수록 좋은 지표 → percentile rank (0~1)
+    for col in ["_rel_strength", "_roc_20", "_sharpe_60d"]:
+        df_raw[col + "_rank"] = df_raw[col].rank(pct=True)
+
+    # 낮을수록 좋은 지표 → 역순 rank
+    for col in ["_atr_pct", "_downside_dev"]:
+        df_raw[col + "_rank"] = 1 - df_raw[col].rank(pct=True)
+
+    # ── Pass 3: 최종 점수 계산 (100점 만점) ──
+    scores = []
+    for idx, row in df_raw.iterrows():
+        # PILLAR 1: MOMENTUM (35점)
+        p1_rel = row["_rel_strength_rank"] * 10                        # 상대강도 10점
+        p1_macd = min(max(row["_macd_slope"] / 50 + 0.5, 0), 1) * 8  # MACD 기울기 8점
+        p1_ma = row["_ma_cascade"] * 7                                 # MA 캐스케이드 7점
+        p1_roc = row["_roc_20_rank"] * 5                               # ROC-20 5점
+        p1_obv = row["_obv_confirm"] * 5                               # OBV 확인 5점
+        momentum = p1_rel + p1_macd + p1_ma + p1_roc + p1_obv
+
+        # PILLAR 2: MEAN REVERSION (20점)
+        p2_rsi = row["_rsi_zone"] * 7                                  # RSI 존 7점
+        p2_bb = row["_bb_score"] * 7                                   # 볼린저 %B 7점
+        p2_stoch = row["_stoch_score"] * 6                             # 스토캐스틱 6점
+        mean_rev = p2_rsi + p2_bb + p2_stoch
+
+        # PILLAR 3: TREND QUALITY (25점)
+        p3_adx = row["_adx_score"] * 8                                 # ADX 8점
+        p3_ichi = row["_ichi_score"] * 7                               # 이치모쿠 7점
+        p3_vol = row["_vol_confirm"] * 5                               # 거래량 확인 5점
+        p3_squeeze = row["_squeeze_score"] * 5                         # 볼린저 스퀴즈 5점
+        trend = p3_adx + p3_ichi + p3_vol + p3_squeeze
+
+        # PILLAR 4: RISK-ADJUSTED (20점)
+        p4_sharpe = row["_sharpe_60d_rank"] * 8                        # 샤프비율 8점
+        p4_atr = row["_atr_pct_rank"] * 6                             # ATR 변동성 6점
+        p4_dd = row["_downside_dev_rank"] * 6                          # 하방 편차 6점
+        risk_adj = p4_sharpe + p4_atr + p4_dd
+
+        total = momentum + mean_rev + trend + risk_adj
+        scores.append({
+            "total": round(total, 1),
+            "momentum": round(momentum, 1),
+            "mean_rev": round(mean_rev, 1),
+            "trend": round(trend, 1),
+            "risk_adj": round(risk_adj, 1),
+        })
+
+    df_scores = pd.DataFrame(scores)
+    df_raw["score"] = df_scores["total"]
+    df_raw["momentum"] = df_scores["momentum"]
+    df_raw["mean_rev"] = df_scores["mean_rev"]
+    df_raw["trend"] = df_scores["trend"]
+    df_raw["risk_adj"] = df_scores["risk_adj"]
+
+    # 내부 계산용 컬럼 제거
+    drop_cols = [c for c in df_raw.columns if c.startswith("_")]
+    df_raw = df_raw.drop(columns=drop_cols)
+
+    # Top 5 정렬
+    df_result = df_raw.sort_values("score", ascending=False).head(5).reset_index(drop=True)
     return df_result
 
 
@@ -514,21 +721,23 @@ def fetch_scanner_briefing(stock_code: str, stock_info: dict, today_str: str) ->
 
     stock = stock_info
     try:
-        prompt = f"""당신은 한국 주식 전문 애널리스트입니다. 오늘은 {today_display}입니다.
+        prompt = f"""당신은 한국 주식 전문 퀀트 애널리스트입니다. 오늘은 {today_display}입니다.
 
 [종목 정보]
 - {stock['name']} ({stock['code']}) | 현재가: {stock['price']:,}원 ({stock['change_pct']:+.2f}%)
-- RSI: {stock['rsi']} | 거래량비율: {stock['vol_ratio']}x | MACD: {stock['macd_hist']:+.2f}
+- RSI: {stock['rsi']} | ADX: {stock.get('adx','N/A')} | Sharpe(60d): {stock.get('sharpe','N/A')} | 거래량배율: {stock['vol_ratio']}x | MACD: {stock['macd_hist']:+.2f}
+- 퀀트 스코어: {stock.get('score','N/A')}/100 (모멘텀 {stock.get('momentum','?')}/35 · 진입타이밍 {stock.get('mean_rev','?')}/20 · 추세품질 {stock.get('trend','?')}/25 · 위험조정 {stock.get('risk_adj','?')}/20)
 - 감지된 시그널: {', '.join(stock['signals'])}
 
 [Google 검색 명령]
 "{stock['name']} 최신 뉴스 {today_str}"
 
 [출력 규칙]
-- 반드시 3줄 이내 개조식으로 작성
+- 반드시 4줄 이내 개조식으로 작성
 - 1줄: 핵심 이슈 (최근 뉴스/공시 기반)
-- 2줄: 기술적 판단 (매수/관망/매도)
-- 3줄: 핵심 타점 (진입가, 손절가)
+- 2줄: 퀀트 분석 요약 (어떤 팩터가 강하고 약한지)
+- 3줄: 기술적 판단 (매수/관망/매도 + 근거)
+- 4줄: 핵심 타점 (진입가, 손절가)
 - 코드블록, disclaimer 등 불필요한 텍스트 절대 금지"""
 
         url = f"{base_url}/{model}:generateContent?key={gemini_key}"
@@ -980,12 +1189,18 @@ with _tab_scanner:
     _scanner_today_str = now_kst().strftime("%Y년 %m월 %d일")
 
     st.markdown(
-        f'<div class="section-header">🔎 AI 추천 — {_scanner_today_str} 매수 시그널 Top 5</div>',
+        f'<div class="section-header">🔎 퀀트 AI 추천 — {_scanner_today_str} 멀티팩터 Top 5</div>',
+        unsafe_allow_html=True
+    )
+    st.markdown(
+        '<div style="font-size:0.68rem;color:#4a5568;margin:-8px 0 12px 0;line-height:1.6">'
+        '모멘텀 · 평균회귀 · 추세품질 · 위험조정 <b>4-Pillar 퀀트 모델</b> 기반 스코어링'
+        '</div>',
         unsafe_allow_html=True
     )
 
     try:
-        with st.spinner("📡 주요 종목 기술지표 스캔 중... (최초 1회, 이후 캐시)"):
+        with st.spinner("📡 80개 종목 멀티팩터 퀀트 스캔 중... (최초 1회, 이후 10분 캐시)"):
             _scanner_df = run_scanner(_scanner_date)
     except Exception as _scan_err:
         _scanner_df = pd.DataFrame()
@@ -1018,53 +1233,81 @@ with _tab_scanner:
 
         for _idx, _row in _scanner_df.iterrows():
             _rank = _idx + 1
-            _rank_cls = f"rank-{_rank}" if _rank <= 3 else "rank-other"
             _score = _row["score"]
-            _score_cls = "score-high" if _score >= 50 else ("score-mid" if _score >= 30 else "score-low")
-            _chg_color = "#fc5c5c" if _row["change_pct"] >= 0 else "#4d9fff"
             _chg_arrow = "▲" if _row["change_pct"] >= 0 else "▼"
+            _chg_color = "#fc5c5c" if _row["change_pct"] >= 0 else "#4d9fff"
             _signals_html = "".join(f'<span class="signal-tag">{s}</span>' for s in _row["signals"])
+            _medal = '🥇' if _rank==1 else '🥈' if _rank==2 else '🥉' if _rank==3 else '🏅'
 
-            # 종목 카드 + AI 브리핑 (expander 클릭 시)
-            with st.expander(f"{'🥇' if _rank==1 else '🥈' if _rank==2 else '🥉' if _rank==3 else '🏅'}  {_row['name']}  ({_row['code']})  —  {_row['price']:,}원  {_chg_arrow}{abs(_row['change_pct']):.2f}%  ·  SCORE {_score}", expanded=False):
+            # 필라 점수 바
+            _m = _row.get("momentum", 0)
+            _mr = _row.get("mean_rev", 0)
+            _t = _row.get("trend", 0)
+            _ra = _row.get("risk_adj", 0)
+
+            with st.expander(f"{_medal}  {_row['name']}  ({_row['code']})  —  {_row['price']:,}원  {_chg_arrow}{abs(_row['change_pct']):.2f}%  ·  SCORE {_score}/100", expanded=False):
+                # 시그널 태그 + 기본 지표
                 st.markdown(f'''
                 <div style="padding:4px 0">
                     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
                         {_signals_html}
                         <span style="font-size:0.65rem;color:#4a5568;margin-left:auto">
-                            RSI {_row["rsi"]} · 거래량 {_row["vol_ratio"]}x · MACD {_row["macd_hist"]:+.2f}
+                            RSI {_row["rsi"]} · ADX {_row.get("adx",0)} · Sharpe {_row.get("sharpe",0)} · 거래량 {_row["vol_ratio"]}x
                         </span>
                     </div>
                 </div>
                 ''', unsafe_allow_html=True)
 
-                # AI 브리핑 (클릭 시에만 호출)
+                # 4-Pillar 점수 분해 바
+                st.markdown(f'''
+                <div style="display:flex;gap:4px;margin:6px 0 10px 0;font-size:0.65rem;font-family:'JetBrains Mono',monospace">
+                    <div style="flex:{_m};background:linear-gradient(135deg,#4d9fff,#3a7bd5);color:#fff;padding:3px 6px;border-radius:4px 0 0 4px;text-align:center;min-width:40px" title="모멘텀 {_m}/35">
+                        모멘텀 {_m:.0f}
+                    </div>
+                    <div style="flex:{_mr};background:linear-gradient(135deg,#f5a623,#e8961f);color:#fff;padding:3px 6px;text-align:center;min-width:40px" title="평균회귀 {_mr}/20">
+                        진입 {_mr:.0f}
+                    </div>
+                    <div style="flex:{_t};background:linear-gradient(135deg,#38b2ac,#2d9f99);color:#fff;padding:3px 6px;text-align:center;min-width:40px" title="추세품질 {_t}/25">
+                        추세 {_t:.0f}
+                    </div>
+                    <div style="flex:{_ra};background:linear-gradient(135deg,#9f7aea,#805ad5);color:#fff;padding:3px 6px;border-radius:0 4px 4px 0;text-align:center;min-width:40px" title="위험조정 {_ra}/20">
+                        리스크 {_ra:.0f}
+                    </div>
+                </div>
+                ''', unsafe_allow_html=True)
+
+                # AI 브리핑: 버튼 클릭 시에만 호출
                 _code = _row["code"]
                 _cached_ai = st.session_state[_scanner_ai_cache_key].get(_code)
 
                 if _cached_ai:
                     st.markdown(f'<div class="scanner-ai">{_cached_ai}</div>', unsafe_allow_html=True)
-                elif "GEMINI_API_KEY" not in st.secrets:
-                    st.markdown(
-                        '<div class="scanner-ai" style="color:#4a5568">'
-                        '🔑 Gemini API 키가 등록되지 않았습니다.</div>',
-                        unsafe_allow_html=True
-                    )
                 else:
-                    with st.spinner(f"🤖 {_row['name']} AI 분석 중..."):
-                        _ai_text = fetch_scanner_briefing(_code, _row.to_dict(), _scanner_date)
-                    if _ai_text:
-                        st.markdown(f'<div class="scanner-ai">{_ai_text}</div>', unsafe_allow_html=True)
-                    else:
+                    if "GEMINI_API_KEY" not in st.secrets:
                         st.markdown(
-                            '<div class="scanner-ai" style="color:#4a5568">'
-                            '⚠️ AI 분석을 가져올 수 없습니다. 잠시 후 다시 시도해주세요.</div>',
+                            '<div style="color:#4a5568;font-size:0.72rem;padding:4px 0">'
+                            '🔑 Gemini API 키 미등록 — AI 브리핑 비활성</div>',
                             unsafe_allow_html=True
                         )
+                    else:
+                        _btn_key = f"ai_btn_{_scanner_date}_{_code}"
+                        if st.button(f"🤖 {_row['name']} AI 브리핑 보기", key=_btn_key, type="secondary"):
+                            with st.spinner(f"🤖 {_row['name']} AI 분석 중..."):
+                                _ai_text = fetch_scanner_briefing(_code, _row.to_dict(), _scanner_date)
+                            if _ai_text:
+                                st.session_state[_scanner_ai_cache_key][_code] = _ai_text
+                                st.markdown(f'<div class="scanner-ai">{_ai_text}</div>', unsafe_allow_html=True)
+                            else:
+                                st.markdown(
+                                    '<div class="scanner-ai" style="color:#4a5568">'
+                                    '⚠️ AI 분석을 가져올 수 없습니다. 잠시 후 다시 시도해주세요.</div>',
+                                    unsafe_allow_html=True
+                                )
 
     st.markdown(
         '<div style="text-align:center;color:#4a5568;font-size:0.65rem;margin-top:1rem">'
-        '📊 종목 검색 탭에서 개별 종목 상세 분석 · 스캔 데이터 10분 캐시 · AI 브리핑 하루 1회 캐시</div>',
+        '📊 4-Pillar 퀀트모델: 모멘텀(35) + 평균회귀(20) + 추세품질(25) + 위험조정(20) = 100점'
+        ' · 스캔 데이터 10분 캐시 · AI 브리핑은 버튼 클릭 시 1회 호출 후 캐시</div>',
         unsafe_allow_html=True
     )
 
@@ -1506,6 +1749,10 @@ with _tab_analysis:
     </div>
     <script>
     const D = {_chart_data};
+    if (typeof LightweightCharts === 'undefined') {{
+      document.getElementById('chart').innerHTML = '<div style="color:#fc5c5c;text-align:center;padding:80px 20px;font-size:0.85rem">⚠️ 차트 라이브러리 로딩 실패 — 페이지를 새로고침 해주세요</div>';
+      throw new Error('LightweightCharts not loaded');
+    }}
     const chart = LightweightCharts.createChart(document.getElementById('chart'), {{
       layout:{{ background:{{type:'Solid',color:'#0b0e17'}}, textColor:'#a0aec0' }},
       grid:{{ vertLines:{{color:'#1a2030'}}, horzLines:{{color:'#1a2030'}} }},
