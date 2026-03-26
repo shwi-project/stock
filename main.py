@@ -89,15 +89,18 @@ st.markdown("""
         padding: 0.35rem 0 0.2rem 0; border-bottom: 1px solid #1e2435; margin-bottom: 0.45rem;
     }
     
-    /* 검색 돋보기 버튼 전용 스타일 */
+    /* 검색 돋보기 버튼 전용 스타일 (원본 복원) */
     [data-testid="stHorizontalBlock"] .stButton > button {
         height: 32px !important;
         min-height: 32px !important;
         max-height: 32px !important;
+        width: 36px !important;
+        min-width: 36px !important;
         padding: 0 !important;
         line-height: 32px !important;
         font-size: 0.9rem !important;
         margin-bottom: 5px !important;
+        margin-left: 0px !important;
         display: flex !important;
         align-items: center !important;
         justify-content: center !important;
@@ -113,6 +116,10 @@ st.markdown("""
     [data-testid="stHorizontalBlock"] .stButton > button:active {
         background: #1e2d45 !important;
         border-color: #4d9fff !important;
+    }
+    [data-testid="stButton"] > div {
+        display: flex !important;
+        align-items: flex-end !important;
     }
 
     /* 스캐너 AI 예측 버튼 (standalone primary — columns 밖) */
@@ -1249,20 +1256,6 @@ def _render_scanner():
     if _scanner_ai_cache_key not in st.session_state:
         st.session_state[_scanner_ai_cache_key] = {}
 
-    # AI 브리핑 트리거 처리
-    _ai_trigger = st.session_state.pop("_scanner_ai_trigger", None)
-    if _ai_trigger and "GEMINI_API_KEY" in st.secrets:
-        _trig_row = _scanner_df[_scanner_df["code"] == _ai_trigger]
-        if not _trig_row.empty:
-            with st.spinner("🤖 AI 분석 중..."):
-                _ai_text = fetch_scanner_briefing(_ai_trigger, _trig_row.iloc[0].to_dict(), _scanner_date)
-            if _ai_text:
-                st.session_state[_scanner_ai_cache_key][_ai_trigger] = _ai_text
-
-    # AI 트리거 콜백
-    def _on_ai_click(_code):
-        st.session_state["_scanner_ai_trigger"] = _code
-
     for _idx, _row in _scanner_df.iterrows():
         _rank = _idx + 1
         _score = _row["score"]
@@ -1298,7 +1291,7 @@ def _render_scanner():
                 'border:1px solid rgba(99,102,241,0.35);color:#c4b5fd;'
                 'font-family:\'Noto Sans KR\',sans-serif;font-size:0.48rem;font-weight:500;'
                 'letter-spacing:0.8px;padding:2px 8px;border-radius:5px;'
-                'margin-left:6px;white-space:nowrap;cursor:pointer">✦ AI 예측내용 ↓</span>'
+                'margin-left:6px;white-space:nowrap">✦ AI 예측내용</span>'
             )
 
         # 카드 전체 HTML (st.columns 사용 안함)
@@ -1334,11 +1327,15 @@ def _render_scanner():
         </div>
         ''', unsafe_allow_html=True)
 
-        # AI 버튼 (standalone — st.columns 밖이라 검색 버튼 CSS 영향 없음)
+        # AI 버튼 (standalone — 클릭 시 직접 호출)
         if not _cached_ai and "GEMINI_API_KEY" in st.secrets:
             _btn_key = f"ai_{_scanner_date}_{_code}"
-            st.button("✦ AI 예측내용", key=_btn_key, type="primary",
-                      on_click=_on_ai_click, args=(_code,))
+            if st.button("✦ AI 예측내용", key=_btn_key, type="primary"):
+                with st.spinner("🤖 AI 분석 중..."):
+                    _ai_text = fetch_scanner_briefing(_code, _row.to_dict(), _scanner_date)
+                if _ai_text:
+                    st.session_state[_scanner_ai_cache_key][_code] = _ai_text
+                    st.rerun(scope="fragment")
 
     st.markdown(
         '<div style="text-align:center;color:#4a5568;font-size:0.6rem;margin-top:1rem">'
