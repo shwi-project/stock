@@ -132,37 +132,39 @@ st.markdown("""
     [data-testid="stForm"] [data-testid="stElementContainer"] {
         margin-bottom: 0 !important;
     }
-    [data-testid="stFormSubmitButton"] {
-        margin-top: -2px !important;
-        margin-bottom: 0 !important;
-    }
-    /* 스캐너 AI 버튼 (form submit) */
+    /* 스캐너 AI 버튼 (form submit) — 소형 뱃지 스타일 */
     [data-testid="stFormSubmitButton"] > button {
-        background: linear-gradient(135deg, #1a1f3a, #1e2d4a) !important;
-        border: 1px solid rgba(99,102,241,0.35) !important;
-        color: #c4b5fd !important;
+        background: rgba(99,102,241,0.08) !important;
+        border: 1px solid rgba(99,102,241,0.25) !important;
+        color: #a5b4fc !important;
         font-family: 'Noto Sans KR', sans-serif !important;
-        font-size: 0.50rem !important;
-        font-weight: 500 !important;
-        letter-spacing: 0.8px !important;
-        padding: 0 10px !important;
-        height: 22px !important;
-        min-height: 22px !important;
-        max-height: 22px !important;
-        border-radius: 5px !important;
-        transition: all 0.25s ease !important;
+        font-size: 0.45rem !important;
+        font-weight: 600 !important;
+        letter-spacing: 0.5px !important;
+        padding: 0 7px !important;
+        height: 18px !important;
+        min-height: 18px !important;
+        max-height: 18px !important;
+        border-radius: 9px !important;
+        transition: all 0.2s ease !important;
         width: auto !important;
         min-width: auto !important;
-        max-width: 130px !important;
+        max-width: 100px !important;
         white-space: nowrap !important;
-        margin-top: -4px !important;
+        margin-top: 0 !important;
         margin-bottom: 0 !important;
+        cursor: pointer !important;
     }
     [data-testid="stFormSubmitButton"] > button:hover {
-        background: linear-gradient(135deg, #252b50, #2d3a6a) !important;
-        border-color: rgba(139,92,246,0.6) !important;
+        background: rgba(99,102,241,0.18) !important;
+        border-color: rgba(139,92,246,0.5) !important;
         color: #e0d4ff !important;
-        box-shadow: 0 0 12px rgba(139,92,246,0.15) !important;
+        box-shadow: 0 0 8px rgba(139,92,246,0.12) !important;
+    }
+    [data-testid="stFormSubmitButton"] {
+        display: flex !important;
+        align-items: center !important;
+        height: 28px !important;
     }
 
     .ai-box {
@@ -1286,7 +1288,7 @@ def _render_scanner():
 
         # ── 종목명 줄: [이름+코드+스코어] [AI버튼] [빈여백] — 왼쪽 밀착 ──
         _submitted = False
-        _col_info, _col_btn, _col_spacer = st.columns([5, 2, 3])
+        _col_info, _col_btn, _col_spacer = st.columns([4.5, 1.5, 4])
         with _col_info:
             st.markdown(
                 f'<div style="display:flex;align-items:center;gap:8px;padding:4px 0">'
@@ -1304,7 +1306,7 @@ def _render_scanner():
             elif _cached_ai:
                 st.markdown(
                     '<div style="display:flex;align-items:center;height:28px">'
-                    '<span style="font-size:0.5rem;color:#3b82f6;letter-spacing:0.5px;opacity:0.7">✦ AI 완료</span>'
+                    '<span style="font-size:0.42rem;color:rgba(165,180,252,0.5);letter-spacing:0.3px">✦ AI</span>'
                     '</div>',
                     unsafe_allow_html=True
                 )
