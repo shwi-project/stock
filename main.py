@@ -1256,11 +1256,29 @@ with _tab_scanner:
             # AI 브리핑 HTML
             _ai_html = ""
             if _cached_ai:
-                _ai_html = f'''<div style="margin-top:10px;padding:10px 14px;background:linear-gradient(135deg,#0f1a2e,#111827);
-                    border-left:3px solid #3b82f6;border-radius:6px;font-size:0.78rem;line-height:1.8;color:#cbd5e0">
-                    🤖 {_cached_ai}</div>'''
-            elif "GEMINI_API_KEY" in st.secrets:
-                _ai_html = f'<div style="margin-top:8px;font-size:0.68rem;color:#4a5568">👇 아래 버튼으로 AI 브리핑</div>'
+                # 줄 단위로 파싱해서 구조화된 브리핑 카드 생성
+                _ai_lines = [l.strip() for l in _cached_ai.replace('<br>', '\n').split('\n') if l.strip()]
+                _ai_items = ""
+                for _al in _ai_lines:
+                    # 불릿/번호 제거
+                    _clean = _al.lstrip('•·-–—0123456789. ')
+                    if not _clean:
+                        continue
+                    # 첫 줄은 헤드라인 스타일
+                    if not _ai_items:
+                        _ai_items += f'<div style="font-size:0.82rem;font-weight:600;color:#e2e8f0;margin-bottom:8px">{_clean}</div>'
+                    else:
+                        _ai_items += f'<div style="font-size:0.76rem;color:#a0aec0;line-height:1.7;padding-left:2px">▸ {_clean}</div>'
+                _ai_html = f'''
+                <div style="margin-top:12px;background:linear-gradient(135deg,#0c1525 0%,#111d30 100%);
+                    border:1px solid #1e3a5f;border-radius:8px;padding:14px 16px;position:relative;overflow:hidden">
+                    <div style="position:absolute;top:0;left:0;width:100%;height:2px;background:linear-gradient(90deg,#3b82f6,#8b5cf6,#3b82f6)"></div>
+                    <div style="display:flex;align-items:center;gap:6px;margin-bottom:10px">
+                        <span style="font-size:0.9rem">🤖</span>
+                        <span style="font-size:0.65rem;font-weight:600;color:#3b82f6;text-transform:uppercase;letter-spacing:1.5px">AI BRIEFING</span>
+                    </div>
+                    {_ai_items}
+                </div>'''
 
             # 카드 전체를 HTML로 렌더
             st.markdown(f'''
