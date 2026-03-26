@@ -94,9 +94,10 @@ st.markdown("""
         height: 32px !important;
         min-height: 32px !important;
         max-height: 32px !important;
-        padding: 0 8px !important;
+        padding: 0 !important;
         line-height: 32px !important;
         font-size: 0.9rem !important;
+        margin-bottom: 5px !important;
         display: flex !important;
         align-items: center !important;
         justify-content: center !important;
@@ -106,6 +107,11 @@ st.markdown("""
     }
     [data-testid="stBaseButton-secondary"]:hover {
         background: #3d4f6e !important;
+        border-color: #4d9fff !important;
+        color: #e2e8f0 !important;
+    }
+    [data-testid="stBaseButton-secondary"]:active {
+        background: #1e2d45 !important;
         border-color: #4d9fff !important;
     }
 
