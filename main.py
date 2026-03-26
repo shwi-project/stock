@@ -119,7 +119,7 @@ st.markdown("""
         background: linear-gradient(135deg, #1a1f3a, #1e2d4a) !important;
         border: 1px solid rgba(99,102,241,0.4) !important;
         color: #c4b5fd !important;
-        font-family: 'JetBrains Mono', monospace !important;
+        font-family: 'Noto Sans KR', sans-serif !important;
         font-size: 0.58rem !important;
         font-weight: 600 !important;
         letter-spacing: 0.8px !important;
