@@ -1922,6 +1922,7 @@ with _tab_analysis:
     if (D.zoom_from) {{
       const last_dt = D.pred_line.length>0 ? D.pred_line[D.pred_line.length-1].time : D.cdl[D.cdl.length-1].time;
       chart.timeScale().setVisibleRange({{from:D.zoom_from, to:last_dt}});
+    }}
     }}  // end initChart
     </script>
     </body>
