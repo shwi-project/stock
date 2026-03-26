@@ -120,12 +120,12 @@ st.markdown("""
         border: 1px solid rgba(99,102,241,0.4) !important;
         color: #c4b5fd !important;
         font-family: 'Noto Sans KR', sans-serif !important;
-        font-size: 0.58rem !important;
-        font-weight: 600 !important;
-        letter-spacing: 0.8px !important;
-        padding: 3px 12px !important;
-        height: 24px !important;
-        min-height: 24px !important;
+        font-size: 0.5rem !important;
+        font-weight: 500 !important;
+        letter-spacing: 1px !important;
+        padding: 2px 10px !important;
+        height: 22px !important;
+        min-height: 22px !important;
         border-radius: 6px !important;
         transition: all 0.25s ease !important;
         margin-top: -6px !important;
