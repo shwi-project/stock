@@ -1284,38 +1284,30 @@ def _render_scanner():
         _cached_ai = st.session_state[_scanner_ai_cache_key].get(_code)
         _score_cls = "score-high" if _score >= 60 else ("score-mid" if _score >= 40 else "score-low")
 
-        # ── 종목명 줄: 이름 + 코드 | 스코어 + AI 버튼 (같은 줄, form으로 CSS 분리) ──
+        # ── 종목명 줄: [이름+코드+스코어] [AI버튼] [빈여백] — 왼쪽 밀착 ──
         _submitted = False
-        _col_name, _col_score_btn = st.columns([6, 4])
-        with _col_name:
+        _col_info, _col_btn, _col_spacer = st.columns([5, 2, 3])
+        with _col_info:
             st.markdown(
                 f'<div style="display:flex;align-items:center;gap:8px;padding:4px 0">'
                 f'<span class="scanner-rank rank-{_rank if _rank <= 3 else "other"}">{_rank}</span>'
                 f'<span style="font-size:0.88rem;font-weight:600;color:#e2e8f0">{_row["name"]}</span>'
                 f'<span style="font-size:0.68rem;color:#4a5568">{_code}</span>'
+                f'<span class="scanner-score {_score_cls}">{_score:.0f}/100</span>'
                 f'</div>',
                 unsafe_allow_html=True
             )
-        with _col_score_btn:
-            _btn_col_a, _btn_col_b = st.columns([1, 1])
-            with _btn_col_a:
+        with _col_btn:
+            if not _cached_ai and "GEMINI_API_KEY" in st.secrets:
+                with st.form(key=f"scanner_{_code}", clear_on_submit=False, border=False):
+                    _submitted = st.form_submit_button("✦ AI 예측내용")
+            elif _cached_ai:
                 st.markdown(
-                    f'<div style="display:flex;align-items:center;justify-content:flex-end;height:28px">'
-                    f'<span class="scanner-score {_score_cls}">{_score:.0f}/100</span>'
-                    f'</div>',
+                    '<div style="display:flex;align-items:center;height:28px">'
+                    '<span style="font-size:0.5rem;color:#3b82f6;letter-spacing:0.5px;opacity:0.7">✦ AI 완료</span>'
+                    '</div>',
                     unsafe_allow_html=True
                 )
-            with _btn_col_b:
-                if not _cached_ai and "GEMINI_API_KEY" in st.secrets:
-                    with st.form(key=f"scanner_{_code}", clear_on_submit=False, border=False):
-                        _submitted = st.form_submit_button("✦ AI 예측내용")
-                elif _cached_ai:
-                    st.markdown(
-                        '<div style="display:flex;align-items:center;justify-content:flex-start;height:28px">'
-                        '<span style="font-size:0.5rem;color:#3b82f6;letter-spacing:0.5px;opacity:0.7">✦ AI 완료</span>'
-                        '</div>',
-                        unsafe_allow_html=True
-                    )
 
         # ── 카드 본문 (HTML) ──
         st.markdown(f'''
