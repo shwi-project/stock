@@ -1398,16 +1398,7 @@ def _render_scanner():
     # 새로고침 버튼 (캐시 있을 때만 표시)
     _force_refresh = False
     if _cached_df_ss is not None:
-        _refresh_col1, _refresh_col2 = st.columns([8, 2])
-        with _refresh_col2:
-            _force_refresh = st.button("🔄 새로고침", key="scanner_refresh", use_container_width=True)
-        with _refresh_col1:
-            if _cached_ts:
-                st.markdown(
-                    f'<div style="font-size:0.6rem;color:#4a5568;padding-top:8px">'
-                    f'마지막 조회: {_elapsed_min}분 전</div>',
-                    unsafe_allow_html=True
-                )
+        _force_refresh = st.button("🔄", key="scanner_refresh", help="추천 종목 새로고침")
 
     if _cached_df_ss is not None and not _force_refresh:
         # 캐시 존재 → 즉시 사용 (블로킹 없음, 검색탭 영향 zero)
