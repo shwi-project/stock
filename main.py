@@ -1218,17 +1218,28 @@ with _tab_scanner:
             unsafe_allow_html=True
         )
     else:
-        # 스캐너 AI 캐시 (날짜 단위)
         _scanner_ai_cache_key = f"scanner_ai_{_scanner_date}"
         if _scanner_ai_cache_key not in st.session_state:
             st.session_state[_scanner_ai_cache_key] = {}
+
+        # AI 브리핑 트리거 처리 (rerun 전에)
+        _ai_trigger = st.session_state.get("_scanner_ai_trigger")
+        if _ai_trigger and "GEMINI_API_KEY" in st.secrets:
+            _trig_code = _ai_trigger
+            st.session_state["_scanner_ai_trigger"] = None
+            _trig_row = _scanner_df[_scanner_df["code"] == _trig_code]
+            if not _trig_row.empty:
+                with st.spinner(f"🤖 AI 분석 중..."):
+                    _ai_text = fetch_scanner_briefing(_trig_code, _trig_row.iloc[0].to_dict(), _scanner_date)
+                if _ai_text:
+                    st.session_state[_scanner_ai_cache_key][_trig_code] = _ai_text
 
         for _idx, _row in _scanner_df.iterrows():
             _rank = _idx + 1
             _score = _row["score"]
             _chg_arrow = "▲" if _row["change_pct"] >= 0 else "▼"
-            _signals_txt = " · ".join(_row["signals"])
-            _medal = '🥇' if _rank==1 else '🥈' if _rank==2 else '🥉' if _rank==3 else '🏅'
+            _chg_color = "#fc5c5c" if _row["change_pct"] >= 0 else "#4d9fff"
+            _signals_html = "".join(f'<span class="signal-tag">{s}</span>' for s in _row["signals"])
             _m = _row.get("momentum", 0)
             _mr = _row.get("mean_rev", 0)
             _t = _row.get("trend", 0)
@@ -1236,38 +1247,65 @@ with _tab_scanner:
             _code = _row["code"]
             _cached_ai = st.session_state[_scanner_ai_cache_key].get(_code)
 
-            with st.expander(f"{_medal}  {_row['name']}  ({_row['code']})  —  {_row['price']:,}원  {_chg_arrow}{abs(_row['change_pct']):.2f}%  ·  SCORE {_score}/100", expanded=False):
-                st.write(f"📌 {_signals_txt}")
-                st.write(f"RSI {_row['rsi']} · ADX {_row.get('adx',0)} · Sharpe {_row.get('sharpe',0)} · 거래량 {_row['vol_ratio']}x")
-                st.write(f"모멘텀 **{_m:.0f}**/35 · 진입 **{_mr:.0f}**/20 · 추세 **{_t:.0f}**/25 · 리스크 **{_ra:.0f}**/20")
-                if _cached_ai:
-                    st.success(_cached_ai)
+            # 스코어 색상
+            _score_cls = "score-high" if _score >= 60 else ("score-mid" if _score >= 40 else "score-low")
 
-        # AI 브리핑 — expander 밖에서 처리 (레이아웃 충돌 방지)
-        if "GEMINI_API_KEY" in st.secrets:
-            st.divider()
-            _ai_options = [f"{r['name']} ({r['code']})" for _, r in _scanner_df.iterrows()]
-            _ai_select = st.selectbox("🤖 AI 브리핑 받을 종목 선택", _ai_options, index=0, key="scanner_ai_select")
-            _ai_sel_code = _scanner_df.iloc[_ai_options.index(_ai_select)]["code"] if _ai_select else None
-            if _ai_sel_code:
-                _sel_cached = st.session_state[_scanner_ai_cache_key].get(_ai_sel_code)
-                if _sel_cached:
-                    st.success(_sel_cached)
-                else:
-                    if st.button("🤖 AI 브리핑 실행", key="scanner_ai_run", use_container_width=True):
-                        _sel_row = _scanner_df[_scanner_df["code"] == _ai_sel_code].iloc[0]
-                        with st.spinner(f"🤖 {_sel_row['name']} AI 분석 중..."):
-                            _ai_text = fetch_scanner_briefing(_ai_sel_code, _sel_row.to_dict(), _scanner_date)
-                        if _ai_text:
-                            st.session_state[_scanner_ai_cache_key][_ai_sel_code] = _ai_text
-                            st.rerun()
-                        else:
-                            st.error("AI 분석을 가져올 수 없습니다.")
+            # 필라 바 비율
+            _total_p = max(_m + _mr + _t + _ra, 1)
+
+            # AI 브리핑 HTML
+            _ai_html = ""
+            if _cached_ai:
+                _ai_html = f'''<div style="margin-top:10px;padding:10px 14px;background:linear-gradient(135deg,#0f1a2e,#111827);
+                    border-left:3px solid #3b82f6;border-radius:6px;font-size:0.78rem;line-height:1.8;color:#cbd5e0">
+                    🤖 {_cached_ai}</div>'''
+            elif "GEMINI_API_KEY" in st.secrets:
+                _ai_html = f'<div style="margin-top:8px;font-size:0.68rem;color:#4a5568">👇 아래 버튼으로 AI 브리핑</div>'
+
+            # 카드 전체를 HTML로 렌더
+            st.markdown(f'''
+            <div class="scanner-card">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+                    <div style="display:flex;align-items:center;gap:8px">
+                        <span class="scanner-rank rank-{_rank if _rank <= 3 else 'other'}">{_rank}</span>
+                        <div>
+                            <span style="font-size:0.88rem;font-weight:600;color:#e2e8f0">{_row["name"]}</span>
+                            <span style="font-size:0.68rem;color:#4a5568;margin-left:6px">{_code}</span>
+                        </div>
+                    </div>
+                    <span class="scanner-score {_score_cls}">{_score:.0f}/100</span>
+                </div>
+                <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:8px">
+                    <span style="font-family:'JetBrains Mono',monospace;font-size:1rem;font-weight:600;color:#e2e8f0">{_row["price"]:,}원</span>
+                    <span style="font-size:0.8rem;color:{_chg_color};font-weight:600">{_chg_arrow} {abs(_row["change_pct"]):.2f}%</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:10px">
+                    {_signals_html}
+                    <span style="font-size:0.6rem;color:#4a5568;margin-left:auto">
+                        RSI {_row["rsi"]} · ADX {_row.get("adx",0)} · Sharpe {_row.get("sharpe",0)}
+                    </span>
+                </div>
+                <div style="display:flex;gap:3px;height:22px;font-size:0.6rem;font-family:'JetBrains Mono',monospace;line-height:22px;margin-bottom:4px">
+                    <div style="flex:{_m};background:linear-gradient(135deg,#4d9fff,#3a7bd5);color:#fff;text-align:center;border-radius:4px 0 0 4px;overflow:hidden;white-space:nowrap">모멘텀 {_m:.0f}</div>
+                    <div style="flex:{max(_mr, 0.5)};background:linear-gradient(135deg,#f5a623,#e8961f);color:#fff;text-align:center;overflow:hidden;white-space:nowrap">진입 {_mr:.0f}</div>
+                    <div style="flex:{_t};background:linear-gradient(135deg,#38b2ac,#2d9f99);color:#fff;text-align:center;overflow:hidden;white-space:nowrap">추세 {_t:.0f}</div>
+                    <div style="flex:{max(_ra, 0.5)};background:linear-gradient(135deg,#9f7aea,#805ad5);color:#fff;text-align:center;border-radius:0 4px 4px 0;overflow:hidden;white-space:nowrap">리스크 {_ra:.0f}</div>
+                </div>
+                <div style="font-size:0.55rem;color:#4a5568">모멘텀 /35 · 진입 /20 · 추세 /25 · 리스크 /20</div>
+                {_ai_html}
+            </div>
+            ''', unsafe_allow_html=True)
+
+            # AI 버튼 (캐시 없을 때만, HTML 밖에서 독립적으로)
+            if not _cached_ai and "GEMINI_API_KEY" in st.secrets:
+                if st.button(f"🤖 {_row['name']} AI 브리핑", key=f"ai_{_scanner_date}_{_code}", use_container_width=True):
+                    st.session_state["_scanner_ai_trigger"] = _code
+                    st.rerun()
 
     st.markdown(
-        '<div style="text-align:center;color:#4a5568;font-size:0.65rem;margin-top:1rem">'
+        '<div style="text-align:center;color:#4a5568;font-size:0.6rem;margin-top:1rem">'
         '📊 4-Pillar 퀀트모델: 모멘텀(35) + 평균회귀(20) + 추세품질(25) + 위험조정(20) = 100점'
-        ' · 스캔 데이터 10분 캐시 · AI 브리핑은 버튼 클릭 시 1회 호출 후 캐시</div>',
+        ' · 10분 캐시 · AI 버튼 클릭 시 1회 호출</div>',
         unsafe_allow_html=True
     )
 
