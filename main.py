@@ -50,10 +50,11 @@ st.markdown("""
     [data-testid="collapsedControl"] { display: none !important; }
 
     /* 모바일 좌우 스크롤 방지 */
-    html, body, [data-testid="stAppViewContainer"], .main {
+    html, body, [data-testid="stAppViewContainer"], .main, .block-container {
         overflow-x: hidden !important;
         max-width: 100vw !important;
     }
+    ::-webkit-scrollbar:horizontal { display: none !important; height: 0 !important; }
 
     .block-container {
         padding-top: 0.7rem !important;
