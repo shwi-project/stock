@@ -144,32 +144,35 @@ st.markdown("""
     }
     [data-testid="stFormSubmitButton"] > button {
         direction: ltr !important;
-        background: transparent !important;
-        border: none !important;
-        color: #64748b !important;
-        font-family: 'JetBrains Mono', monospace !important;
-        font-size: 0.58rem !important;
+        background: linear-gradient(135deg, #1a1f3a, #1e2d4a) !important;
+        border: 1px solid rgba(99,102,241,0.35) !important;
+        color: #c4b5fd !important;
+        font-family: 'Noto Sans KR', sans-serif !important;
+        font-size: 0.50rem !important;
         font-weight: 500 !important;
-        letter-spacing: 0 !important;
-        padding: 0 !important;
-        height: 16px !important;
-        min-height: 16px !important;
-        max-height: 16px !important;
-        border-radius: 0 !important;
-        transition: color 0.15s ease !important;
+        letter-spacing: 0.8px !important;
+        padding: 0 10px !important;
+        height: 20px !important;
+        min-height: 20px !important;
+        max-height: 20px !important;
+        border-radius: 5px !important;
+        transition: all 0.2s ease !important;
         width: auto !important;
         min-width: auto !important;
+        max-width: 130px !important;
         white-space: nowrap !important;
         cursor: pointer !important;
         position: relative !important;
         top: 24px !important;
         margin-right: 16px !important;
-        line-height: 16px !important;
-        box-shadow: none !important;
+        line-height: 20px !important;
+        box-shadow: 0 1px 4px rgba(99,102,241,0.15) !important;
     }
     [data-testid="stFormSubmitButton"] > button:hover {
-        background: transparent !important;
-        color: #94a3b8 !important;
+        background: linear-gradient(135deg, #1e2745, #243352) !important;
+        color: #ddd6fe !important;
+        border-color: rgba(99,102,241,0.55) !important;
+        box-shadow: 0 2px 8px rgba(99,102,241,0.25) !important;
     }
 
     .ai-box {
@@ -1326,7 +1329,7 @@ def _render_scanner():
         # AI 버튼 (카드 앞에 렌더, height:0 + top으로 카드 헤더에 고정)
         if not _cached_ai and "GEMINI_API_KEY" in st.secrets:
             with st.form(key=f"scanner_{_code}", clear_on_submit=False, border=False):
-                _submitted = st.form_submit_button("AI ›")
+                _submitted = st.form_submit_button("✦ AI 예측")
 
         # 카드 렌더
         st.markdown(_card_html, unsafe_allow_html=True)
