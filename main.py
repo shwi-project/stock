@@ -50,14 +50,10 @@ st.markdown("""
     [data-testid="collapsedControl"] { display: none !important; }
 
     /* 모바일 좌우 스크롤 방지 */
-    html, body, [data-testid="stAppViewContainer"], .main,
-    [data-testid="stVerticalBlock"], [data-testid="stHorizontalBlock"],
-    [data-testid="stElementContainer"], section[data-testid="stSidebar"],
-    .block-container, [data-testid="stTabs"], [data-testid="stTabContent"] {
+    html, body, [data-testid="stAppViewContainer"], .main {
         overflow-x: hidden !important;
         max-width: 100vw !important;
     }
-    * { box-sizing: border-box !important; }
 
     .block-container {
         padding-top: 0.7rem !important;
