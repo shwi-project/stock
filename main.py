@@ -150,7 +150,7 @@ st.markdown("""
         border: 1px solid #4a5568 !important;
         color: #e2e8f0 !important;
         font-family: 'Noto Sans KR', sans-serif !important;
-        font-size: 9px !important;
+        font-size: 8px !important;
         transform: scale(0.85) !important;
         transform-origin: right center !important;
         font-weight: 500 !important;
