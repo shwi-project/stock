@@ -166,7 +166,7 @@ st.markdown("""
         white-space: nowrap !important;
         cursor: pointer !important;
         position: relative !important;
-        top: 22px !important;
+        top: 26px !important;
         margin-right: 16px !important;
         line-height: 13px !important;
         box-shadow: 0 1px 3px rgba(99,102,241,0.12) !important;
