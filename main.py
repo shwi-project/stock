@@ -156,9 +156,9 @@ st.markdown("""
         font-weight: 500 !important;
         letter-spacing: 0.3px !important;
         padding: 0 5px !important;
-        height: 22px !important;
-        min-height: 22px !important;
-        max-height: 22px !important;
+        height: 26px !important;
+        min-height: 26px !important;
+        max-height: 26px !important;
         border-radius: 4px !important;
         transition: all 0.2s ease !important;
         width: auto !important;
