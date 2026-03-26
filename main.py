@@ -852,6 +852,30 @@ KR_HOLIDAYS = {
     datetime(2026,  5,  5), datetime(2026,  5, 25), datetime(2026,  6,  6),
     datetime(2026,  8, 17), datetime(2026,  9, 24), datetime(2026,  9, 25),
     datetime(2026,  9, 28), datetime(2026, 10,  9), datetime(2026, 12, 25),
+    # 2027
+    datetime(2027,  1,  1), datetime(2027,  2,  6), datetime(2027,  2,  7),
+    datetime(2027,  2,  8), datetime(2027,  3,  1), datetime(2027,  5,  5),
+    datetime(2027,  5, 13), datetime(2027,  6,  6), datetime(2027,  8, 15),
+    datetime(2027,  9, 25), datetime(2027,  9, 26), datetime(2027,  9, 27),
+    datetime(2027, 10,  3), datetime(2027, 10,  9), datetime(2027, 12, 25),
+    # 2028
+    datetime(2028,  1,  1), datetime(2028,  1, 25), datetime(2028,  1, 26),
+    datetime(2028,  1, 27), datetime(2028,  3,  1), datetime(2028,  5,  5),
+    datetime(2028,  5,  2), datetime(2028,  6,  6), datetime(2028,  8, 15),
+    datetime(2028, 10,  3), datetime(2028, 10,  9), datetime(2028, 10, 13),
+    datetime(2028, 10, 14), datetime(2028, 10, 15), datetime(2028, 12, 25),
+    # 2029
+    datetime(2029,  1,  1), datetime(2029,  2, 12), datetime(2029,  2, 13),
+    datetime(2029,  2, 14), datetime(2029,  3,  1), datetime(2029,  5,  5),
+    datetime(2029,  5, 22), datetime(2029,  6,  6), datetime(2029,  8, 15),
+    datetime(2029, 10,  1), datetime(2029, 10,  2), datetime(2029, 10,  3),
+    datetime(2029, 10,  9), datetime(2029, 12, 25),
+    # 2030
+    datetime(2030,  1,  1), datetime(2030,  2,  2), datetime(2030,  2,  3),
+    datetime(2030,  2,  4), datetime(2030,  3,  1), datetime(2030,  5,  5),
+    datetime(2030,  5,  9), datetime(2030,  6,  6), datetime(2030,  8, 15),
+    datetime(2030,  9, 21), datetime(2030,  9, 22), datetime(2030,  9, 23),
+    datetime(2030, 10,  3), datetime(2030, 10,  9), datetime(2030, 12, 25),
 }
 
 def get_kr_trading_days(start_date, count):
@@ -926,7 +950,9 @@ def compute_prediction(stock_code: str, date_str: str, pred_days: int,
     REGRESSOR_COLS = ["RSI", "MACD_hist", "BB_pct", "OBV_norm", "sentiment"]
     df_f = df[["Date", "Close"] + REGRESSOR_COLS].rename(
         columns={"Date": "ds", "Close": "y"}
-    ).dropna()
+    )
+    df_f[REGRESSOR_COLS] = df_f[REGRESSOR_COLS].ffill()
+    df_f = df_f.dropna()
 
     # 적응형 Prophet 하이퍼파라미터
     atr_14 = (df["High"] - df["Low"]).rolling(14).mean()
@@ -1018,33 +1044,55 @@ def compute_prediction(stock_code: str, date_str: str, pred_days: int,
                             _current_close * (1 + _hard_limit_pct))
 
     fc_future_tmp["yhat"] = ensemble_pred
-    spread = float(fc_future_tmp.iloc[-1]["yhat_upper"] - fc_future_tmp.iloc[-1]["yhat_lower"])
+
+    # Recalculate confidence intervals using spread from both Prophet and GBR
+    prophet_upper = float(fc_future_tmp.iloc[-1]["yhat_upper"])
+    prophet_lower = float(fc_future_tmp.iloc[-1]["yhat_lower"])
+    prophet_std = (prophet_upper - prophet_lower) / 3.92
+
+    # GBR std from training residuals
+    if len(df_gb) > 30 and gbr_pred != prophet_pred:
+        gbr_train_pred = gbr.predict(X_gb)
+        gbr_std = float(np.std(y_gb - gbr_train_pred))
+    else:
+        gbr_std = prophet_std
+
+    ensemble_std = np.sqrt(0.6 * prophet_std**2 + 0.4 * gbr_std**2)
+    ensemble_spread = ensemble_std * 3.92  # ≈ 95% CI
+
     _max_spread = _current_close * _hard_limit_pct * 2
-    spread = min(spread, _max_spread)
-    fc_future_tmp["yhat_upper"] = min(ensemble_pred + spread * 0.5,
+    ensemble_spread = min(ensemble_spread, _max_spread)
+    fc_future_tmp["yhat_upper"] = min(ensemble_pred + ensemble_spread * 0.5,
                                       _current_close * (1 + _hard_limit_pct))
-    fc_future_tmp["yhat_lower"] = max(ensemble_pred - spread * 0.5,
+    fc_future_tmp["yhat_lower"] = max(ensemble_pred - ensemble_spread * 0.5,
                                       _current_close * (1 - _hard_limit_pct))
 
-    # 백테스팅 (최근 10영업일 MAPE)
+    # 백테스팅 — walk-forward (최근 10영업일 MAPE, 데이터 누출 없음)
     backtest_mape = None
     if len(df_gb) > 40:
         try:
             X_bt = df_gb[GBR_FEATURES].values
             y_bt = df_gb["target"].values
-            bt_actual = y_bt[-10:]
-            bt_pred_gbr = []
-            for i in range(10):
-                idx = len(X_bt) - 10 + i
+            n_test = 10
+            min_train = max(30, len(X_bt) - n_test)
+            bt_pred_list, bt_actual_list = [], []
+            for i in range(n_test):
+                train_end = min_train + i          # exclusive upper bound for training
+                test_idx = train_end               # predict this index
+                if test_idx >= len(X_bt):
+                    break
                 gbr_bt = GradientBoostingRegressor(
                     n_estimators=100, max_depth=4, learning_rate=0.1,
                     subsample=0.8, random_state=42
                 )
-                gbr_bt.fit(X_bt[:idx], y_bt[:idx])
-                bt_pred_gbr.append(gbr_bt.predict(X_bt[idx:idx+1])[0])
-            bt_pred_arr = np.array(bt_pred_gbr)
-            bt_actual_arr = np.array(bt_actual)
-            backtest_mape = float(np.mean(np.abs((bt_actual_arr - bt_pred_arr) / bt_actual_arr)) * 100)
+                gbr_bt.fit(X_bt[:train_end], y_bt[:train_end])
+                bt_pred_list.append(gbr_bt.predict(X_bt[test_idx:test_idx+1])[0])
+                bt_actual_list.append(y_bt[test_idx])
+            if bt_pred_list:
+                bt_pred_arr = np.array(bt_pred_list)
+                bt_actual_arr = np.array(bt_actual_list)
+                backtest_mape = float(np.mean(np.abs(
+                    (bt_actual_arr - bt_pred_arr) / bt_actual_arr)) * 100)
         except Exception:
             backtest_mape = None
 
