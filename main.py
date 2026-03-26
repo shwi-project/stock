@@ -122,27 +122,29 @@ st.markdown("""
         align-items: flex-end !important;
     }
 
-    /* 스캐너 AI 예측 버튼 (standalone primary — columns 밖) */
+    /* 스캐너 AI 버튼 (primary — 검색 버튼 CSS보다 높은 specificity) */
+    [data-testid="stHorizontalBlock"] .stButton > button[data-testid="stBaseButton-primary"],
     button[data-testid="stBaseButton-primary"] {
         background: linear-gradient(135deg, #1a1f3a, #1e2d4a) !important;
         border: 1px solid rgba(99,102,241,0.35) !important;
         color: #c4b5fd !important;
         font-family: 'Noto Sans KR', sans-serif !important;
-        font-size: 0.52rem !important;
+        font-size: 0.50rem !important;
         font-weight: 500 !important;
         letter-spacing: 0.8px !important;
-        padding: 0 10px !important;
-        height: 24px !important;
-        min-height: 24px !important;
-        max-height: 24px !important;
+        padding: 0 8px !important;
+        height: 22px !important;
+        min-height: 22px !important;
+        max-height: 22px !important;
         border-radius: 5px !important;
         transition: all 0.25s ease !important;
         width: auto !important;
-        max-width: 130px !important;
+        min-width: auto !important;
+        max-width: 100px !important;
         white-space: nowrap !important;
-        margin-top: -6px !important;
-        margin-bottom: 4px !important;
+        margin: 0 !important;
     }
+    [data-testid="stHorizontalBlock"] .stButton > button[data-testid="stBaseButton-primary"]:hover,
     button[data-testid="stBaseButton-primary"]:hover {
         background: linear-gradient(135deg, #252b50, #2d3a6a) !important;
         border-color: rgba(139,92,246,0.6) !important;
@@ -1177,7 +1179,7 @@ else:
 st.markdown(f"""<div style='display:flex;align-items:center;justify-content:space-between;margin-bottom:2px'>
     <div style='display:flex;align-items:center'>
         {logo_html}
-        Castle Stock AI &nbsp;<span style='font-size:0.75rem;color:#4a5568;font-weight:400'>믿지 못할 주식 예측</span>
+        <span style='font-size:1.05rem;font-weight:700;color:#e2e8f0'>Castle Stock AI</span> &nbsp;<span style='font-size:0.75rem;color:#8b95a5;font-weight:400'>믿지 못할 주식 예측</span>
     </div>
     <div style='font-size:0.68rem;color:#4a5568;text-align:right'>
         {_mkt_status}<br>{_now.strftime("%H:%M")} KST
@@ -1288,17 +1290,31 @@ def _render_scanner():
                 '</div>'
             )
 
-        # 카드 전체 HTML (st.columns 사용 안함)
+        # ── 카드 헤더: 종목명 + AI 버튼 (같은 줄) ──
+        _header_col, _btn_col = st.columns([8.5, 1.5])
+        with _header_col:
+            st.markdown(
+                f'<div style="display:flex;align-items:center;gap:8px;padding:6px 0 2px 0">'
+                f'<span class="scanner-rank rank-{_rank if _rank <= 3 else "other"}">{_rank}</span>'
+                f'<span style="font-size:0.88rem;font-weight:600;color:#e2e8f0">{_row["name"]}</span>'
+                f'<span style="font-size:0.68rem;color:#4a5568">{_code}</span>'
+                f'<span class="scanner-score {_score_cls}" style="margin-left:auto">{_score:.0f}/100</span>'
+                f'</div>',
+                unsafe_allow_html=True
+            )
+        with _btn_col:
+            if not _cached_ai and "GEMINI_API_KEY" in st.secrets:
+                _btn_key = f"ai_{_scanner_date}_{_code}"
+                if st.button("✦ AI", key=_btn_key, type="primary"):
+                    with st.spinner("🤖 AI 분석 중..."):
+                        _ai_text = fetch_scanner_briefing(_code, _row.to_dict(), _scanner_date)
+                    if _ai_text:
+                        st.session_state[_scanner_ai_cache_key][_code] = _ai_text
+                        st.rerun(scope="fragment")
+
+        # ── 카드 본문 ──
         st.markdown(f'''
-        <div class="scanner-card">
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-                <div style="display:flex;align-items:center;gap:8px">
-                    <span class="scanner-rank rank-{_rank if _rank <= 3 else 'other'}">{_rank}</span>
-                    <span style="font-size:0.88rem;font-weight:600;color:#e2e8f0">{_row["name"]}</span>
-                    <span style="font-size:0.68rem;color:#4a5568">{_code}</span>
-                </div>
-                <span class="scanner-score {_score_cls}">{_score:.0f}/100</span>
-            </div>
+        <div class="scanner-card" style="margin-top:-6px">
             <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:8px">
                 <span style="font-family:'JetBrains Mono',monospace;font-size:1rem;font-weight:600;color:#e2e8f0">{_row["price"]:,}원</span>
                 <span style="font-size:0.8rem;color:{_chg_color};font-weight:600">{_chg_arrow} {abs(_row["change_pct"]):.2f}%</span>
@@ -1319,16 +1335,6 @@ def _render_scanner():
             {_ai_html}
         </div>
         ''', unsafe_allow_html=True)
-
-        # AI 버튼 (standalone — 클릭 시 직접 호출)
-        if not _cached_ai and "GEMINI_API_KEY" in st.secrets:
-            _btn_key = f"ai_{_scanner_date}_{_code}"
-            if st.button("✦ AI 예측내용", key=_btn_key, type="primary"):
-                with st.spinner("🤖 AI 분석 중..."):
-                    _ai_text = fetch_scanner_briefing(_code, _row.to_dict(), _scanner_date)
-                if _ai_text:
-                    st.session_state[_scanner_ai_cache_key][_code] = _ai_text
-                    st.rerun(scope="fragment")
 
     st.markdown(
         '<div style="text-align:center;color:#4a5568;font-size:0.6rem;margin-top:1rem">'
