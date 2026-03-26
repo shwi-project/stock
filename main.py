@@ -1308,18 +1308,35 @@ def _render_scanner():
     )
 
     _loading_placeholder = st.empty()
-    try:
-        _loading_placeholder.markdown(
-            '<div style="text-align:center;padding:20px;color:#8b95a5;font-size:0.75rem">'
-            '🔄 추천 종목 조회 중...</div>',
-            unsafe_allow_html=True
-        )
-        _scanner_df = run_scanner(_scanner_date)
-        _loading_placeholder.empty()
-    except Exception as _scan_err:
-        _scanner_df = pd.DataFrame()
-        _loading_placeholder.empty()
-        st.error(f"스캔 중 오류: {_scan_err}")
+    # ── session_state 이중 캐시: 전체 리런 시 블로킹 방지 ──
+    _ss_cache_key = f"scanner_df_{_scanner_date}"
+    _ss_time_key = f"scanner_time_{_scanner_date}"
+    _ss_ttl = 600  # 10분
+    import time as _time_mod
+    _now_ts = _time_mod.time()
+    _cached_ts = st.session_state.get(_ss_time_key, 0)
+    _cached_df_ss = st.session_state.get(_ss_cache_key)
+
+    if _cached_df_ss is not None and (_now_ts - _cached_ts) < _ss_ttl:
+        # 캐시 유효 → 즉시 사용 (블로킹 없음)
+        _scanner_df = _cached_df_ss
+    else:
+        # 캐시 만료 또는 최초 → 재계산
+        try:
+            _loading_placeholder.markdown(
+                '<div style="text-align:center;padding:20px;color:#8b95a5;font-size:0.75rem">'
+                '🔄 추천 종목 조회 중...</div>',
+                unsafe_allow_html=True
+            )
+            _scanner_df = run_scanner(_scanner_date)
+            st.session_state[_ss_cache_key] = _scanner_df
+            st.session_state[_ss_time_key] = _now_ts
+            _loading_placeholder.empty()
+        except Exception as _scan_err:
+            _scanner_df = st.session_state.get(_ss_cache_key, pd.DataFrame())
+            _loading_placeholder.empty()
+            if _scanner_df.empty:
+                st.error(f"스캔 중 오류: {_scan_err}")
 
     # 종목명 매핑
     if not _scanner_df.empty:
