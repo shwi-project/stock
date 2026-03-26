@@ -144,19 +144,19 @@ st.markdown("""
     }
     [data-testid="stFormSubmitButton"] > button {
         direction: ltr !important;
-        background: #1a2440 !important;
-        border: 1px solid rgba(99,102,241,0.25) !important;
-        color: #818cf8 !important;
+        background: transparent !important;
+        border: none !important;
+        color: #64748b !important;
         font-family: 'JetBrains Mono', monospace !important;
-        font-size: 0.6rem !important;
-        font-weight: 700 !important;
-        letter-spacing: 0.3px !important;
-        padding: 2px 8px !important;
-        height: auto !important;
-        min-height: auto !important;
-        max-height: none !important;
-        border-radius: 4px !important;
-        transition: all 0.2s ease !important;
+        font-size: 0.58rem !important;
+        font-weight: 500 !important;
+        letter-spacing: 0 !important;
+        padding: 0 !important;
+        height: 16px !important;
+        min-height: 16px !important;
+        max-height: 16px !important;
+        border-radius: 0 !important;
+        transition: color 0.15s ease !important;
         width: auto !important;
         min-width: auto !important;
         white-space: nowrap !important;
@@ -164,12 +164,12 @@ st.markdown("""
         position: relative !important;
         top: 24px !important;
         margin-right: 16px !important;
-        line-height: 1.4 !important;
+        line-height: 16px !important;
+        box-shadow: none !important;
     }
     [data-testid="stFormSubmitButton"] > button:hover {
-        background: #243352 !important;
-        color: #a5b4fc !important;
-        border-color: rgba(99,102,241,0.5) !important;
+        background: transparent !important;
+        color: #94a3b8 !important;
     }
 
     .ai-box {
@@ -1326,7 +1326,7 @@ def _render_scanner():
         # AI 버튼 (카드 앞에 렌더, height:0 + top으로 카드 헤더에 고정)
         if not _cached_ai and "GEMINI_API_KEY" in st.secrets:
             with st.form(key=f"scanner_{_code}", clear_on_submit=False, border=False):
-                _submitted = st.form_submit_button("✦ AI 분석")
+                _submitted = st.form_submit_button("AI ›")
 
         # 카드 렌더
         st.markdown(_card_html, unsafe_allow_html=True)
