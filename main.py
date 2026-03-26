@@ -144,19 +144,19 @@ st.markdown("""
     }
     [data-testid="stFormSubmitButton"] > button {
         direction: ltr !important;
-        background: rgba(99,102,241,0.08) !important;
-        border: 1px solid rgba(99,102,241,0.25) !important;
-        color: #a5b4fc !important;
+        background: linear-gradient(135deg, rgba(59,130,246,0.12), rgba(139,92,246,0.10)) !important;
+        border: 1px solid rgba(99,102,241,0.3) !important;
+        color: #93c5fd !important;
         font-family: 'Noto Sans KR', sans-serif !important;
-        font-size: 0.48rem !important;
-        font-weight: 500 !important;
-        letter-spacing: 0.3px !important;
-        padding: 0 8px !important;
-        height: 18px !important;
-        min-height: 18px !important;
-        max-height: 18px !important;
-        border-radius: 9px !important;
-        transition: all 0.2s ease !important;
+        font-size: 0.5rem !important;
+        font-weight: 600 !important;
+        letter-spacing: 0.5px !important;
+        padding: 0 10px !important;
+        height: 20px !important;
+        min-height: 20px !important;
+        max-height: 20px !important;
+        border-radius: 10px !important;
+        transition: all 0.25s ease !important;
         width: auto !important;
         min-width: auto !important;
         white-space: nowrap !important;
@@ -164,12 +164,15 @@ st.markdown("""
         position: relative !important;
         top: 24px !important;
         margin-right: 16px !important;
+        backdrop-filter: blur(8px) !important;
+        box-shadow: 0 1px 4px rgba(0,0,0,0.15), inset 0 1px 0 rgba(255,255,255,0.05) !important;
     }
     [data-testid="stFormSubmitButton"] > button:hover {
-        background: rgba(99,102,241,0.2) !important;
-        border-color: rgba(139,92,246,0.5) !important;
-        color: #e0d4ff !important;
-        box-shadow: 0 0 8px rgba(139,92,246,0.12) !important;
+        background: linear-gradient(135deg, rgba(59,130,246,0.22), rgba(139,92,246,0.20)) !important;
+        border-color: rgba(139,92,246,0.55) !important;
+        color: #e0e7ff !important;
+        box-shadow: 0 2px 8px rgba(99,102,241,0.25), inset 0 1px 0 rgba(255,255,255,0.08) !important;
+        transform: translateY(-1px) !important;
     }
 
     .ai-box {
