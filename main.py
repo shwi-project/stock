@@ -1332,7 +1332,7 @@ def _render_scanner():
                     RSI {_row["rsi"]} · ADX {_row.get("adx",0)} · Sharpe {_row.get("sharpe",0)}
                 </span>
             </div>
-            <div style="display:flex;gap:3px;height:22px;font-size:0.6rem;font-family:'JetBrains Mono',monospace;line-height:22px;margin-bottom:4px">
+            <div style="display:flex;gap:3px;height:24px;font-size:0.7rem;font-family:'Noto Sans KR',sans-serif;font-weight:600;line-height:24px;margin-bottom:4px">
                 <div style="flex:{_m};background:linear-gradient(135deg,#4d9fff,#3a7bd5);color:#fff;text-align:center;border-radius:4px 0 0 4px;overflow:hidden;white-space:nowrap">모멘텀 {_m:.0f}</div>
                 <div style="flex:{max(_mr, 0.5)};background:linear-gradient(135deg,#f5a623,#e8961f);color:#fff;text-align:center;overflow:hidden;white-space:nowrap">진입 {_mr:.0f}</div>
                 <div style="flex:{_t};background:linear-gradient(135deg,#38b2ac,#2d9f99);color:#fff;text-align:center;overflow:hidden;white-space:nowrap">추세 {_t:.0f}</div>
