@@ -144,14 +144,14 @@ st.markdown("""
     }
     [data-testid="stFormSubmitButton"] > button {
         direction: ltr !important;
-        background: #1a2a4a !important;
+        background: #1e2d45 !important;
         border: none !important;
-        color: #4d9fff !important;
+        color: #e2e8f0 !important;
         font-family: 'JetBrains Mono', monospace !important;
-        font-size: 0.55rem !important;
-        font-weight: 700 !important;
+        font-size: 0.48rem !important;
+        font-weight: 600 !important;
         letter-spacing: 0 !important;
-        padding: 1px 6px !important;
+        padding: 1px 5px !important;
         height: auto !important;
         min-height: auto !important;
         max-height: none !important;
@@ -167,8 +167,8 @@ st.markdown("""
         line-height: 1.4 !important;
     }
     [data-testid="stFormSubmitButton"] > button:hover {
-        background: #243b5e !important;
-        color: #7ab8ff !important;
+        background: #2d3a55 !important;
+        color: #ffffff !important;
     }
 
     .ai-box {
