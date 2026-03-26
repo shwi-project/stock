@@ -132,19 +132,16 @@ st.markdown("""
     [data-testid="stForm"] [data-testid="stElementContainer"] {
         margin-bottom: 0 !important;
     }
-    /* 스캐너 AI form — 카드 헤더 우측에 겹침 */
+    /* 스캐너 AI form — 카드 앞에서 height:0, 카드 헤더 우측 위에 겹침 */
     [data-testid="stForm"] {
-        margin-top: -52px !important;
-        margin-bottom: 6px !important;
+        height: 0 !important;
+        overflow: visible !important;
+        position: relative !important;
+        z-index: 10 !important;
         display: flex !important;
         justify-content: flex-end !important;
-        padding-right: 14px !important;
-        position: relative !important;
-        z-index: 5 !important;
-        pointer-events: none !important;
-    }
-    [data-testid="stFormSubmitButton"] {
-        pointer-events: auto !important;
+        padding: 0 16px 0 0 !important;
+        margin: 0 !important;
     }
     [data-testid="stFormSubmitButton"] > button {
         background: rgba(99,102,241,0.08) !important;
@@ -165,6 +162,8 @@ st.markdown("""
         white-space: nowrap !important;
         margin: 0 !important;
         cursor: pointer !important;
+        position: relative !important;
+        top: 14px !important;
     }
     [data-testid="stFormSubmitButton"] > button:hover {
         background: rgba(99,102,241,0.2) !important;
@@ -1324,13 +1323,13 @@ def _render_scanner():
         </div>
         '''
 
-        # 카드 렌더
-        st.markdown(_card_html, unsafe_allow_html=True)
-
-        # AI 버튼: 카드 위에 겹침 (음수 마진으로 카드 헤더 우측에 위치)
+        # AI 버튼 form (카드보다 먼저 렌더, height:0으로 공간 안 차지, 카드 위에 겹침)
         if not _cached_ai and "GEMINI_API_KEY" in st.secrets:
             with st.form(key=f"scanner_{_code}", clear_on_submit=False, border=False):
                 _submitted = st.form_submit_button("✦ AI 분석")
+
+        # 카드 렌더
+        st.markdown(_card_html, unsafe_allow_html=True)
 
         # AI 결과 (카드 HTML 밖 — Gemini 응답이 카드를 깨뜨리지 않음)
         if _cached_ai:
