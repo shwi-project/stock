@@ -1395,19 +1395,13 @@ def _render_scanner():
     _now_ts = _time_mod.time()
     _elapsed_min = int((_now_ts - _cached_ts) / 60) if _cached_ts else 0
 
+    _load_requested_key = "scanner_load_requested"
     if _cached_df_ss is not None:
         # 캐시 존재 → 즉시 사용 (블로킹 없음, 검색탭 영향 zero)
         _scanner_df = _cached_df_ss
-    else:
-        # 최초 로드: 자동 조회하지 않음 → 버튼으로 수동 조회
-        _load_btn = st.button("🔎 추천 종목 불러오기", key="scanner_load", use_container_width=True)
-        if not _load_btn:
-            st.markdown(
-                '<div style="text-align:center;padding:40px 20px;color:#4a5568;font-size:0.75rem">'
-                '버튼을 눌러 오늘의 추천 종목을 조회하세요</div>',
-                unsafe_allow_html=True
-            )
-            return  # 조회 안 함 → 검색탭 블로킹 zero
+        st.session_state[_load_requested_key] = False
+    elif st.session_state.get(_load_requested_key, False):
+        # 로딩 요청됨 → 즉시 실행 (탭 전환 후 돌아와도 유지)
         try:
             _loading_placeholder.markdown(
                 '<div style="text-align:center;padding:20px;color:#8b95a5;font-size:0.75rem">'
@@ -1417,12 +1411,26 @@ def _render_scanner():
             _scanner_df = run_scanner(_scanner_date)
             st.session_state[_ss_cache_key] = _scanner_df
             st.session_state[_ss_time_key] = _time_mod.time()
+            st.session_state[_load_requested_key] = False
             _loading_placeholder.empty()
         except Exception as _scan_err:
             _scanner_df = pd.DataFrame()
+            st.session_state[_load_requested_key] = False
             _loading_placeholder.empty()
             st.error(f"스캔 중 오류: {_scan_err}")
             return
+    else:
+        # 최초 로드: 버튼으로 수동 조회
+        _load_btn = st.button("🔎 추천 종목 불러오기", key="scanner_load", use_container_width=True)
+        if _load_btn:
+            st.session_state[_load_requested_key] = True
+            st.rerun(scope="fragment")
+        st.markdown(
+            '<div style="text-align:center;padding:40px 20px;color:#4a5568;font-size:0.75rem">'
+            '버튼을 눌러 오늘의 추천 종목을 조회하세요</div>',
+            unsafe_allow_html=True
+        )
+        return
 
     # 종목명 매핑
     if not _scanner_df.empty:
