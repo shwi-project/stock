@@ -148,10 +148,10 @@ st.markdown("""
         border: none !important;
         color: #4d9fff !important;
         font-family: 'JetBrains Mono', monospace !important;
-        font-size: 0.62rem !important;
+        font-size: 0.55rem !important;
         font-weight: 700 !important;
         letter-spacing: 0 !important;
-        padding: 2px 8px !important;
+        padding: 1px 6px !important;
         height: auto !important;
         min-height: auto !important;
         max-height: none !important;
