@@ -1793,7 +1793,8 @@ with _tab_analysis:
     <!DOCTYPE html>
     <html>
     <head>
-    <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+    <script>if(typeof LightweightCharts==='undefined')document.write('<scr'+'ipt src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"><\\/scr'+'ipt>')</script>
     <style>
       body {{ margin:0; background:#0b0e17; overflow:hidden; }}
       #chart-container {{ position:relative; width:100%; height:380px; }}
