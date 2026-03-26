@@ -122,27 +122,29 @@ st.markdown("""
         align-items: flex-end !important;
     }
 
-    /* 스캐너 AI form — 카드 앞, height:0, 버튼만 카드 우측 상단에 겹침 */
+    /* 스캐너 AI form — 카드 뒤, 카드 하단 우측에 겹침 */
     [data-testid="stForm"] {
         border: none !important;
         background: transparent !important;
         height: 0 !important;
         overflow: visible !important;
         padding: 0 !important;
-        margin: 0 !important;
+        margin-top: -38px !important;
+        margin-bottom: 12px !important;
         position: relative !important;
         z-index: 10 !important;
     }
+    [data-testid="stForm"],
+    [data-testid="stForm"] [data-testid="stVerticalBlockBorderWrapper"],
     [data-testid="stForm"] [data-testid="stVerticalBlock"],
     [data-testid="stForm"] [data-testid="stElementContainer"],
     [data-testid="stForm"] [data-testid="stFormSubmitButton"],
     [data-testid="stForm"] [data-testid="stFormSubmitButton"] > div {
-        height: auto !important;
+        direction: rtl !important;
         overflow: visible !important;
-        margin: 0 !important;
-        padding: 0 !important;
     }
     [data-testid="stFormSubmitButton"] > button {
+        direction: ltr !important;
         background: rgba(99,102,241,0.08) !important;
         border: 1px solid rgba(99,102,241,0.25) !important;
         color: #a5b4fc !important;
@@ -160,9 +162,7 @@ st.markdown("""
         min-width: auto !important;
         white-space: nowrap !important;
         cursor: pointer !important;
-        float: right !important;
         margin-right: 16px !important;
-        margin-top: 16px !important;
     }
     [data-testid="stFormSubmitButton"] > button:hover {
         background: rgba(99,102,241,0.2) !important;
@@ -1322,13 +1322,13 @@ def _render_scanner():
         </div>
         '''
 
-        # AI 버튼 form (카드보다 먼저 렌더, height:0으로 공간 안 차지, 카드 위에 겹침)
+        # 카드 렌더
+        st.markdown(_card_html, unsafe_allow_html=True)
+
+        # AI 버튼 (카드 뒤, CSS로 카드 하단 우측에 겹침)
         if not _cached_ai and "GEMINI_API_KEY" in st.secrets:
             with st.form(key=f"scanner_{_code}", clear_on_submit=False, border=False):
                 _submitted = st.form_submit_button("✦ AI 분석")
-
-        # 카드 렌더
-        st.markdown(_card_html, unsafe_allow_html=True)
 
         # AI 결과 (카드 HTML 밖 — Gemini 응답이 카드를 깨뜨리지 않음)
         if _cached_ai:
