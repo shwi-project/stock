@@ -887,6 +887,45 @@ def get_kr_trading_days(start_date, count):
     return days
 
 
+def detect_regime(df: pd.DataFrame) -> str:
+    """Detect market regime: 'bull', 'bear', or 'sideways'.
+
+    Uses ADX, price vs MA60, and MACD histogram to classify.
+    - Bull: ADX > 25 AND price > MA60 AND MACD_hist > 0
+    - Bear: ADX > 25 AND price < MA60 AND MACD_hist < 0
+    - Sideways: ADX <= 25 OR mixed signals
+    """
+    close = df["Close"]
+    high = df["High"]
+    low = df["Low"]
+
+    if len(close) < 60:
+        return "sideways"
+
+    # ADX calculation
+    adx_data = _calc_adx(high, low, close)
+    adx_val = adx_data["adx"]
+
+    # Price vs MA60
+    ma60 = float(close.rolling(60).mean().iloc[-1])
+    cur_price = float(close.iloc[-1])
+    price_above_ma60 = cur_price > ma60
+
+    # MACD histogram
+    ema12 = close.ewm(span=12, adjust=False).mean()
+    ema26 = close.ewm(span=26, adjust=False).mean()
+    macd_line = ema12 - ema26
+    signal_line = macd_line.ewm(span=9, adjust=False).mean()
+    macd_hist_val = float((macd_line - signal_line).iloc[-1])
+
+    if adx_val > 25 and price_above_ma60 and macd_hist_val > 0:
+        return "bull"
+    elif adx_val > 25 and not price_above_ma60 and macd_hist_val < 0:
+        return "bear"
+    else:
+        return "sideways"
+
+
 @st.cache_data(ttl=86400, show_spinner=False)
 def compute_prediction(stock_code: str, date_str: str, pred_days: int,
                        _last_date_str: str, news_raw_json: str) -> dict:
@@ -946,26 +985,43 @@ def compute_prediction(stock_code: str, date_str: str, pred_days: int,
 
     df["sentiment"] = sentiment_score
 
-    REGRESSOR_COLS = ["RSI", "MACD_hist", "BB_pct", "OBV_norm", "sentiment"]
+    # ── KOSPI benchmark regressor ──
+    df["kospi_ret20"] = 0.0
+    try:
+        import FinanceDataReader as fdr
+        _kospi_start = df["Date"].min().strftime("%Y-%m-%d")
+        _kospi_df = fdr.DataReader("KS11", _kospi_start)
+        if _kospi_df is not None and len(_kospi_df) > 20:
+            _kospi_close = _kospi_df["Close"].astype(float)
+            _kospi_ret20 = _kospi_close.pct_change(20).fillna(0.0)
+            # Align KOSPI data with stock dates
+            _kospi_df_aligned = pd.DataFrame({
+                "Date": pd.to_datetime(_kospi_df.index).tz_localize(None),
+                "kospi_ret20": _kospi_ret20.values,
+            }).drop_duplicates(subset=["Date"], keep="last")
+            df = df.merge(_kospi_df_aligned, on="Date", how="left", suffixes=("_old", ""))
+            if "kospi_ret20_old" in df.columns:
+                df["kospi_ret20"] = df["kospi_ret20"].fillna(df["kospi_ret20_old"])
+                df.drop(columns=["kospi_ret20_old"], inplace=True)
+            df["kospi_ret20"] = df["kospi_ret20"].fillna(0.0)
+    except Exception:
+        df["kospi_ret20"] = 0.0
+
+    # ── Market Regime Detection ──
+    regime = detect_regime(df)
+
+    REGRESSOR_COLS = ["RSI", "MACD_hist", "BB_pct", "OBV_norm", "sentiment", "kospi_ret20"]
     df_f = df[["Date", "Close"] + REGRESSOR_COLS].rename(
         columns={"Date": "ds", "Close": "y"}
     )
     df_f[REGRESSOR_COLS] = df_f[REGRESSOR_COLS].ffill()
     df_f = df_f.dropna()
 
-    # 적응형 Prophet 하이퍼파라미터
-    atr_14 = (df["High"] - df["Low"]).rolling(14).mean()
-    atr_60 = (df["High"] - df["Low"]).rolling(60).mean()
-    if len(atr_14.dropna()) > 0 and len(atr_60.dropna()) > 0:
-        vol_ratio_now = float(atr_14.iloc[-1]) / max(float(atr_60.iloc[-1]), 1e-9)
-        if vol_ratio_now > 2.0:
-            cps = 0.1
-        elif vol_ratio_now < 0.5:
-            cps = 0.02
-        else:
-            cps = 0.05
+    # 적응형 Prophet 하이퍼파라미터 (regime-aware)
+    if regime in ("bull", "bear"):
+        cps = 0.15  # Trending regime: higher changepoint sensitivity
     else:
-        cps = 0.05
+        cps = 0.03  # Sideways regime: lower changepoint sensitivity
 
     np.random.seed(42)  # 재현성
     model = Prophet(
@@ -980,10 +1036,22 @@ def compute_prediction(stock_code: str, date_str: str, pred_days: int,
     trading_days = get_kr_trading_days(df["Date"].max(), pred_days)
     future_dates = pd.DataFrame({"ds": pd.to_datetime(trading_days)})
 
-    # 평균회귀 기반 지표 외삽
+    # 평균회귀 기반 지표 외삽 (adaptive mean-reversion)
     last_row = df_f.iloc[-1]
-    MEAN_TARGETS = {"RSI": 50.0, "BB_pct": 0.5, "MACD_hist": 0.0, "OBV_norm": 0.5, "sentiment": 0.0}
-    REVERT_SPEED = {"RSI": 0.15, "BB_pct": 0.2, "MACD_hist": 0.25, "OBV_norm": 0.1, "sentiment": 0.3}
+    MEAN_TARGETS = {"RSI": 50.0, "BB_pct": 0.5, "MACD_hist": 0.0, "OBV_norm": 0.5, "sentiment": 0.0, "kospi_ret20": 0.0}
+
+    # Adaptive reversion speeds
+    _rsi_val = float(last_row["RSI"])
+    _rsi_theta = 0.1 + 0.3 * min(abs(_rsi_val - 50.0) / 50.0, 1.0)  # Further from 50 = faster reversion
+    _macd_theta = 0.35 if regime == "sideways" else 0.20  # Sideways = faster reversion to 0
+    REVERT_SPEED = {
+        "RSI": _rsi_theta,
+        "BB_pct": 0.3,
+        "MACD_hist": _macd_theta,
+        "OBV_norm": 0.1,
+        "sentiment": 0.3,
+        "kospi_ret20": 0.15,
+    }
 
     for col in REGRESSOR_COLS:
         vals, curr_val = [], float(last_row[col])
@@ -1028,7 +1096,14 @@ def compute_prediction(stock_code: str, date_str: str, pred_days: int,
         except Exception:
             gbr_pred = prophet_pred
 
-    ensemble_pred = prophet_pred * 0.6 + gbr_pred * 0.4
+    # Regime-based ensemble weights
+    if regime == "bull":
+        _w_prophet, _w_gbr = 0.70, 0.30
+    elif regime == "bear":
+        _w_prophet, _w_gbr = 0.50, 0.50
+    else:  # sideways
+        _w_prophet, _w_gbr = 0.40, 0.60
+    ensemble_pred = prophet_pred * _w_prophet + gbr_pred * _w_gbr
 
     # 클램프 (±15% soft, ±30% hard)
     _current_close = float(df["Close"].iloc[-1])
@@ -1056,7 +1131,7 @@ def compute_prediction(stock_code: str, date_str: str, pred_days: int,
     else:
         gbr_std = prophet_std
 
-    ensemble_std = np.sqrt(0.6 * prophet_std**2 + 0.4 * gbr_std**2)
+    ensemble_std = np.sqrt(_w_prophet * prophet_std**2 + _w_gbr * gbr_std**2)
     ensemble_spread = ensemble_std * 3.92  # ≈ 95% CI
 
     _max_spread = _current_close * _hard_limit_pct * 2
@@ -1066,27 +1141,29 @@ def compute_prediction(stock_code: str, date_str: str, pred_days: int,
     fc_future_tmp["yhat_lower"] = max(ensemble_pred - ensemble_spread * 0.5,
                                       _current_close * (1 - _hard_limit_pct))
 
-    # 백테스팅 — walk-forward (최근 10영업일 MAPE, 데이터 누출 없음)
+    # 백테스팅 — proper walk-forward cross-validation (no future data leakage)
+    # Train on data[:i], predict data[i], collect errors
+    # Minimum training window: 200 days, test on last 60 trading days
     backtest_mape = None
-    if len(df_gb) > 40:
+    _min_train_window = 200
+    _n_test_days = 60
+    if len(df_gb) > (_min_train_window + _n_test_days):
         try:
             X_bt = df_gb[GBR_FEATURES].values
             y_bt = df_gb["target"].values
-            n_test = 10
-            min_train = max(30, len(X_bt) - n_test)
+            _total = len(X_bt)
+            _test_start = _total - _n_test_days
             bt_pred_list, bt_actual_list = [], []
-            for i in range(n_test):
-                train_end = min_train + i          # exclusive upper bound for training
-                test_idx = train_end               # predict this index
-                if test_idx >= len(X_bt):
-                    break
+            for i in range(_test_start, _total):
+                if i < _min_train_window:
+                    continue
                 gbr_bt = GradientBoostingRegressor(
                     n_estimators=100, max_depth=4, learning_rate=0.1,
                     subsample=0.8, random_state=42
                 )
-                gbr_bt.fit(X_bt[:train_end], y_bt[:train_end])
-                bt_pred_list.append(gbr_bt.predict(X_bt[test_idx:test_idx+1])[0])
-                bt_actual_list.append(y_bt[test_idx])
+                gbr_bt.fit(X_bt[:i], y_bt[:i])
+                bt_pred_list.append(gbr_bt.predict(X_bt[i:i+1])[0])
+                bt_actual_list.append(y_bt[i])
             if bt_pred_list:
                 bt_pred_arr = np.array(bt_pred_list)
                 bt_actual_arr = np.array(bt_actual_list)
@@ -1099,6 +1176,7 @@ def compute_prediction(stock_code: str, date_str: str, pred_days: int,
         "fc_future": fc_future_tmp.to_dict("records"),
         "sentiment_score": sentiment_score,
         "backtest_mape": backtest_mape,
+        "regime": regime,
         "df_with_indicators": df.to_dict("records"),
     }
 
@@ -1665,7 +1743,7 @@ with _tab_analysis:
 
             # 예측 함수에서 계산된 지표를 df에 반영 (차트용)
             _df_ind = pd.DataFrame(_pred_result["df_with_indicators"])
-            _ind_cols = ["RSI", "MACD_hist", "BB_pct", "OBV_norm", "vol_ratio", "ma20_dist", "sentiment"]
+            _ind_cols = ["RSI", "MACD_hist", "BB_pct", "OBV_norm", "vol_ratio", "ma20_dist", "sentiment", "kospi_ret20"]
             if len(df) == len(_df_ind):
                 for _ind_col in _ind_cols:
                     if _ind_col in _df_ind.columns:
@@ -1721,7 +1799,7 @@ with _tab_analysis:
                 <div class="metric-card">
                     <div class="metric-label">예측 오차율</div>
                     <div class="metric-value" style="font-size:0.95rem;color:{'#4dc98f' if backtest_mape is not None and backtest_mape < 3 else '#f9a825' if backtest_mape is not None and backtest_mape < 5 else '#fc5c5c' if backtest_mape is not None else '#4a5568'}">{f'{backtest_mape:.1f}%' if backtest_mape is not None else '-'}</div>
-                    <div class="metric-sub" style="color:#4a5568">{'MAPE 10일 백테스트' if backtest_mape is not None else '데이터 부족'}</div>
+                    <div class="metric-sub" style="color:#4a5568">{'MAPE 60일 백테스트' if backtest_mape is not None else '데이터 부족'}</div>
                 </div>
                 <div class="metric-card">
                     <div class="metric-label">기술지표</div>
