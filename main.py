@@ -1243,7 +1243,8 @@ def compute_prediction(stock_code: str, date_str: str, pred_days: int,
     # ── EWMA Volatility-based Dynamic Confidence Intervals ──
     _daily_returns = df["Close"].pct_change().dropna()
     ewma_vol = _ewma_volatility(_daily_returns, span=20)
-    _spread_pct = ewma_vol * np.sqrt(pred_days) * 1.5
+    _daily_vol = ewma_vol / np.sqrt(252)  # 연간→일간 변환
+    _spread_pct = _daily_vol * np.sqrt(pred_days) * 2.0
     _spread_pct = min(_spread_pct, _hard_limit_pct)  # cap at hard limit
 
     fc_future_tmp["yhat_upper"] = min(ensemble_pred * (1 + _spread_pct),
