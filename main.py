@@ -88,17 +88,15 @@ st.markdown("""
         padding: 0.35rem 0 0.2rem 0; border-bottom: 1px solid #1e2435; margin-bottom: 0.45rem;
     }
     
-    .stButton > button {
+    /* 검색 돋보기 버튼 전용 스타일 */
+    [data-testid="stHorizontalBlock"] .stButton > button {
         height: 32px !important;
         min-height: 32px !important;
         max-height: 32px !important;
-        width: 36px !important;        /* 고정 너비 */
-        min-width: 36px !important;
         padding: 0 !important;
         line-height: 32px !important;
         font-size: 0.9rem !important;
         margin-bottom: 5px !important;
-        margin-left: 0px !important;
         display: flex !important;
         align-items: center !important;
         justify-content: center !important;
@@ -106,20 +104,14 @@ st.markdown("""
         border: 1px solid #3d4f6e !important;
         color: #e2e8f0 !important;
     }
-    .stButton > button:hover {
+    [data-testid="stHorizontalBlock"] .stButton > button:hover {
         background: #3d4f6e !important;
         border-color: #4d9fff !important;
         color: #e2e8f0 !important;
     }
-    .stButton > button:active {
+    [data-testid="stHorizontalBlock"] .stButton > button:active {
         background: #1e2d45 !important;
         border-color: #4d9fff !important;
-    }
-    [data-testid="stButton"] > div {
-        display: flex !important;
-        align-items: flex-end !important;
-         margin-left: -12px !important;
-        height: 100% !important;
     }
 
     .ai-box {
