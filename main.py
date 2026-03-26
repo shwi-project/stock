@@ -120,12 +120,12 @@ st.markdown("""
         border: 1px solid rgba(99,102,241,0.4) !important;
         color: #c4b5fd !important;
         font-family: 'JetBrains Mono', monospace !important;
-        font-size: 0.65rem !important;
+        font-size: 0.58rem !important;
         font-weight: 600 !important;
-        letter-spacing: 0.5px !important;
-        padding: 4px 14px !important;
-        height: 28px !important;
-        min-height: 28px !important;
+        letter-spacing: 0.8px !important;
+        padding: 3px 12px !important;
+        height: 24px !important;
+        min-height: 24px !important;
         border-radius: 6px !important;
         transition: all 0.25s ease !important;
         margin-top: -6px !important;
@@ -1329,7 +1329,7 @@ with _tab_scanner:
             # AI 버튼 (캐시 없을 때만)
             if not _cached_ai and "GEMINI_API_KEY" in st.secrets:
                 _btn_key = f"ai_{_scanner_date}_{_code}"
-                if st.button(f"✦ AI Briefing", key=_btn_key, type="primary"):
+                if st.button(f"✦ AI 예측내용", key=_btn_key, type="primary"):
                     st.session_state["_scanner_ai_trigger"] = _code
                     st.rerun()
 
