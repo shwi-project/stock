@@ -151,7 +151,7 @@ st.markdown("""
         color: #e2e8f0 !important;
         font-family: 'Noto Sans KR', sans-serif !important;
         font-size: 10px !important;
-        transform: scale(0.65) !important;
+        transform: scale(0.75) !important;
         transform-origin: right center !important;
         font-weight: 500 !important;
         letter-spacing: 0.3px !important;
@@ -1814,10 +1814,16 @@ with _tab_analysis:
     </div>
     <script>
     const D = {_chart_data};
-    if (typeof LightweightCharts === 'undefined') {{
-      document.getElementById('chart').innerHTML = '<div style="color:#fc5c5c;text-align:center;padding:80px 20px;font-size:0.85rem">⚠️ 차트 라이브러리 로딩 실패 — 페이지를 새로고침 해주세요</div>';
-      throw new Error('LightweightCharts not loaded');
+    function tryInit(attempt) {{
+      if (typeof LightweightCharts !== 'undefined') {{ initChart(); return; }}
+      if (attempt < 3) {{
+        setTimeout(function(){{ tryInit(attempt+1); }}, 800);
+      }} else {{
+        document.getElementById('chart').innerHTML = '<div style="color:#fc5c5c;text-align:center;padding:80px 20px;font-size:0.85rem">⚠️ 차트 라이브러리 로딩 실패 — 페이지를 새로고침 해주세요</div>';
+      }}
     }}
+    tryInit(0);
+    function initChart() {{
     const chart = LightweightCharts.createChart(document.getElementById('chart'), {{
       layout:{{ background:{{type:'Solid',color:'#0b0e17'}}, textColor:'#a0aec0' }},
       grid:{{ vertLines:{{color:'#1a2030'}}, horzLines:{{color:'#1a2030'}} }},
@@ -1916,7 +1922,7 @@ with _tab_analysis:
     if (D.zoom_from) {{
       const last_dt = D.pred_line.length>0 ? D.pred_line[D.pred_line.length-1].time : D.cdl[D.cdl.length-1].time;
       chart.timeScale().setVisibleRange({{from:D.zoom_from, to:last_dt}});
-    }}
+    }}  // end initChart
     </script>
     </body>
     </html>
