@@ -89,8 +89,8 @@ st.markdown("""
         padding: 0.35rem 0 0.2rem 0; border-bottom: 1px solid #1e2435; margin-bottom: 0.45rem;
     }
     
-    /* 검색 돋보기 버튼 전용 (secondary 타입만) */
-    [data-testid="stBaseButton-secondary"] {
+    /* 검색 돋보기 버튼 전용 (primary 버튼 제외) */
+    [data-testid="stHorizontalBlock"] .stButton > button:not([data-testid="stBaseButton-primary"]) {
         height: 32px !important;
         min-height: 32px !important;
         max-height: 32px !important;
@@ -105,12 +105,12 @@ st.markdown("""
         border: 1px solid #3d4f6e !important;
         color: #e2e8f0 !important;
     }
-    [data-testid="stBaseButton-secondary"]:hover {
+    [data-testid="stHorizontalBlock"] .stButton > button:not([data-testid="stBaseButton-primary"]):hover {
         background: #3d4f6e !important;
         border-color: #4d9fff !important;
         color: #e2e8f0 !important;
     }
-    [data-testid="stBaseButton-secondary"]:active {
+    [data-testid="stHorizontalBlock"] .stButton > button:not([data-testid="stBaseButton-primary"]):active {
         background: #1e2d45 !important;
         border-color: #4d9fff !important;
     }
