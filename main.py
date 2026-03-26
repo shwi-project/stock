@@ -1218,10 +1218,8 @@ st.markdown(f"""<div style='display:flex;align-items:center;justify-content:spac
 # 예측기간 1영업일 고정
 pred_days = 1
 
-# 장중 자동 갱신 (60초 간격, 장중에만)
+# 장중 여부 판별 (autorefresh는 scanner fragment 안에서만)
 _is_market_open = (_wd < 5 and 800 <= _hm <= 2000)
-if _is_market_open:
-    st_autorefresh(interval=60_000, limit=None, key="market_refresh")
 
 # ─────────────────────────────────────────────
 # 전체 화면 탭: 종목 검색 / 추천 종목
@@ -1245,6 +1243,10 @@ with _tab_analysis:
 # ─── 탭 2: 추천 종목 (모닝 스캐너) ── @st.fragment로 검색탭 영향 방지 ───
 @st.fragment
 def _render_scanner():
+    # 장중에만 autorefresh (fragment 내부 → 종목검색 탭 영향 없음)
+    if _is_market_open:
+        st_autorefresh(interval=600_000, limit=None, key="scanner_refresh")
+
     _scanner_date = now_kst().strftime("%Y%m%d")
     _scanner_today_str = now_kst().strftime("%Y년 %m월 %d일")
 
@@ -1259,10 +1261,18 @@ def _render_scanner():
         unsafe_allow_html=True
     )
 
+    _loading_placeholder = st.empty()
     try:
+        _loading_placeholder.markdown(
+            '<div style="text-align:center;padding:20px;color:#8b95a5;font-size:0.75rem">'
+            '🔄 추천 종목 조회 중...</div>',
+            unsafe_allow_html=True
+        )
         _scanner_df = run_scanner(_scanner_date)
+        _loading_placeholder.empty()
     except Exception as _scan_err:
         _scanner_df = pd.DataFrame()
+        _loading_placeholder.empty()
         st.error(f"스캔 중 오류: {_scan_err}")
 
     # 종목명 매핑
