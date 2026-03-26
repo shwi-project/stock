@@ -119,13 +119,17 @@ st.markdown("""
         background: linear-gradient(135deg, #1e3a5f, #2d4a7a) !important;
         border: 1px solid #3b82f6 !important;
         color: #e2e8f0 !important;
-        font-size: 0.78rem !important;
-        font-weight: 600 !important;
-        padding: 8px 16px !important;
-        border-radius: 8px !important;
+        font-size: 0.68rem !important;
+        font-weight: 500 !important;
+        padding: 4px 14px !important;
+        height: 30px !important;
+        min-height: 30px !important;
+        border-radius: 6px !important;
         transition: all 0.2s !important;
         margin-top: -6px !important;
         margin-bottom: 8px !important;
+        width: auto !important;
+        max-width: 160px !important;
     }
     [data-testid="stBaseButton-primary"]:hover {
         background: linear-gradient(135deg, #2d4a7a, #3b5e9e) !important;
@@ -1322,7 +1326,7 @@ with _tab_scanner:
             # AI 버튼 (캐시 없을 때만)
             if not _cached_ai and "GEMINI_API_KEY" in st.secrets:
                 _btn_key = f"ai_{_scanner_date}_{_code}"
-                if st.button(f"🤖  AI 브리핑 받기", key=_btn_key, use_container_width=True, type="primary"):
+                if st.button(f"🤖 AI 브리핑", key=_btn_key, type="primary"):
                     st.session_state["_scanner_ai_trigger"] = _code
                     st.rerun()
 
