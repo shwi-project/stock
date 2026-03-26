@@ -116,25 +116,28 @@ st.markdown("""
 
     /* 스캐너 AI 브리핑 버튼 */
     [data-testid="stBaseButton-primary"] {
-        background: linear-gradient(135deg, #1e3a5f, #2d4a7a) !important;
-        border: 1px solid #3b82f6 !important;
-        color: #e2e8f0 !important;
-        font-size: 0.68rem !important;
-        font-weight: 500 !important;
+        background: linear-gradient(135deg, #1a1f3a, #1e2d4a) !important;
+        border: 1px solid rgba(99,102,241,0.4) !important;
+        color: #c4b5fd !important;
+        font-family: 'JetBrains Mono', monospace !important;
+        font-size: 0.65rem !important;
+        font-weight: 600 !important;
+        letter-spacing: 0.5px !important;
         padding: 4px 14px !important;
-        height: 30px !important;
-        min-height: 30px !important;
+        height: 28px !important;
+        min-height: 28px !important;
         border-radius: 6px !important;
-        transition: all 0.2s !important;
+        transition: all 0.25s ease !important;
         margin-top: -6px !important;
         margin-bottom: 8px !important;
         width: auto !important;
-        max-width: 160px !important;
+        max-width: 170px !important;
     }
     [data-testid="stBaseButton-primary"]:hover {
-        background: linear-gradient(135deg, #2d4a7a, #3b5e9e) !important;
-        border-color: #60a5fa !important;
-        box-shadow: 0 0 12px rgba(59,130,246,0.3) !important;
+        background: linear-gradient(135deg, #252b50, #2d3a6a) !important;
+        border-color: rgba(139,92,246,0.6) !important;
+        color: #e0d4ff !important;
+        box-shadow: 0 0 16px rgba(139,92,246,0.2) !important;
     }
 
     .ai-box {
@@ -1326,7 +1329,7 @@ with _tab_scanner:
             # AI 버튼 (캐시 없을 때만)
             if not _cached_ai and "GEMINI_API_KEY" in st.secrets:
                 _btn_key = f"ai_{_scanner_date}_{_code}"
-                if st.button(f"🤖 AI 브리핑", key=_btn_key, type="primary"):
+                if st.button(f"✦ AI Briefing", key=_btn_key, type="primary"):
                     st.session_state["_scanner_ai_trigger"] = _code
                     st.rerun()
 
