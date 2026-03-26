@@ -573,6 +573,31 @@ def run_scanner(date_str: str) -> pd.DataFrame:
             else:
                 obv_confirm = 0.4
 
+            # 1f. RSI Divergence Detection (20-bar lookback)
+            _divergence_score = 0.0
+            _divergence_tag = None
+            if n >= 20:
+                _lookback = 20
+                _price_window = close.iloc[-_lookback:]
+                _rsi_window = _calc_rsi(close).iloc[-_lookback:]
+                # Find local lows/highs in price (simple: compare to neighbors)
+                _p_vals = _price_window.values
+                _r_vals = _rsi_window.values
+                _lows_idx = [i for i in range(1, len(_p_vals)-1) if _p_vals[i] < _p_vals[i-1] and _p_vals[i] < _p_vals[i+1]]
+                _highs_idx = [i for i in range(1, len(_p_vals)-1) if _p_vals[i] > _p_vals[i-1] and _p_vals[i] > _p_vals[i+1]]
+                # Bullish divergence: price lower low, RSI higher low
+                if len(_lows_idx) >= 2:
+                    _l1, _l2 = _lows_idx[-2], _lows_idx[-1]
+                    if _p_vals[_l2] < _p_vals[_l1] and _r_vals[_l2] > _r_vals[_l1]:
+                        _divergence_score = 3.0
+                        _divergence_tag = "강세다이버전스"
+                # Bearish divergence: price higher high, RSI lower high
+                if len(_highs_idx) >= 2 and _divergence_score == 0:
+                    _h1, _h2 = _highs_idx[-2], _highs_idx[-1]
+                    if _p_vals[_h2] > _p_vals[_h1] and _r_vals[_h2] < _r_vals[_h1]:
+                        _divergence_score = -3.0
+                        _divergence_tag = "약세다이버전스"
+
             # ─── PILLAR 2: MEAN REVERSION ───
             rsi_series = _calc_rsi(close)
             cur_rsi = float(rsi_series.iloc[-1])
@@ -669,6 +694,7 @@ def run_scanner(date_str: str) -> pd.DataFrame:
             if macd_cur > 0 and macd_slope > 0: signals.append("MACD▲")
             if stoch_score >= 0.8: signals.append("스토캐스틱↑")
             if obv_confirm >= 0.7: signals.append("OBV확인")
+            if _divergence_tag: signals.append(_divergence_tag)
 
             raw_results.append({
                 "code": code, "price": int(cp), "change_pct": change_pct,
@@ -681,6 +707,7 @@ def run_scanner(date_str: str) -> pd.DataFrame:
                 "_sharpe_60d": sharpe_60d, "_atr_pct": atr_pct, "_downside_dev": downside_dev,
                 # Raw scores (Pillar별 절대점수)
                 "_macd_slope": macd_slope, "_ma_cascade": ma_cascade, "_obv_confirm": obv_confirm,
+                "_divergence_score": _divergence_score,
                 "_rsi_zone": rsi_zone, "_bb_score": bb_score, "_stoch_score": stoch_score,
                 "_adx_score": adx_score, "_ichi_score": ichi_score,
                 "_vol_confirm": vol_confirm, "_squeeze_score": squeeze_score,
@@ -712,7 +739,9 @@ def run_scanner(date_str: str) -> pd.DataFrame:
         p1_ma = row["_ma_cascade"] * 7                                 # MA 캐스케이드 7점
         p1_roc = row["_roc_20_rank"] * 5                               # ROC-20 5점
         p1_obv = row["_obv_confirm"] * 5                               # OBV 확인 5점
-        momentum = p1_rel + p1_macd + p1_ma + p1_roc + p1_obv
+        # RSI divergence bonus (±3 pts, clamped within 0~35)
+        p1_div = row["_divergence_score"]                              # 다이버전스 ±3점
+        momentum = np.clip(p1_rel + p1_macd + p1_ma + p1_roc + p1_obv + p1_div, 0, 35)
 
         # PILLAR 2: MEAN REVERSION (20점)
         p2_rsi = row["_rsi_zone"] * 7                                  # RSI 존 7점
@@ -985,32 +1014,32 @@ def compute_prediction(stock_code: str, date_str: str, pred_days: int,
 
     df["sentiment"] = sentiment_score
 
-    # ── KOSPI benchmark regressor ──
-    df["kospi_ret20"] = 0.0
+    # ── KOSPI benchmark regressor (daily returns) ──
+    df["kospi_ret"] = 0.0
     try:
         import FinanceDataReader as fdr
         _kospi_start = df["Date"].min().strftime("%Y-%m-%d")
         _kospi_df = fdr.DataReader("KS11", _kospi_start)
-        if _kospi_df is not None and len(_kospi_df) > 20:
+        if _kospi_df is not None and len(_kospi_df) > 5:
             _kospi_close = _kospi_df["Close"].astype(float)
-            _kospi_ret20 = _kospi_close.pct_change(20).fillna(0.0)
+            _kospi_ret_daily = _kospi_close.pct_change().fillna(0.0)
             # Align KOSPI data with stock dates
             _kospi_df_aligned = pd.DataFrame({
                 "Date": pd.to_datetime(_kospi_df.index).tz_localize(None),
-                "kospi_ret20": _kospi_ret20.values,
+                "kospi_ret": _kospi_ret_daily.values,
             }).drop_duplicates(subset=["Date"], keep="last")
             df = df.merge(_kospi_df_aligned, on="Date", how="left", suffixes=("_old", ""))
-            if "kospi_ret20_old" in df.columns:
-                df["kospi_ret20"] = df["kospi_ret20"].fillna(df["kospi_ret20_old"])
-                df.drop(columns=["kospi_ret20_old"], inplace=True)
-            df["kospi_ret20"] = df["kospi_ret20"].fillna(0.0)
+            if "kospi_ret_old" in df.columns:
+                df["kospi_ret"] = df["kospi_ret"].fillna(df["kospi_ret_old"])
+                df.drop(columns=["kospi_ret_old"], inplace=True)
+            df["kospi_ret"] = df["kospi_ret"].fillna(0.0)
     except Exception:
-        df["kospi_ret20"] = 0.0
+        df["kospi_ret"] = 0.0
 
     # ── Market Regime Detection ──
     regime = detect_regime(df)
 
-    REGRESSOR_COLS = ["RSI", "MACD_hist", "BB_pct", "OBV_norm", "sentiment", "kospi_ret20"]
+    REGRESSOR_COLS = ["RSI", "MACD_hist", "BB_pct", "OBV_norm", "sentiment", "kospi_ret"]
     df_f = df[["Date", "Close"] + REGRESSOR_COLS].rename(
         columns={"Date": "ds", "Close": "y"}
     )
@@ -1018,10 +1047,11 @@ def compute_prediction(stock_code: str, date_str: str, pred_days: int,
     df_f = df_f.dropna()
 
     # 적응형 Prophet 하이퍼파라미터 (regime-aware)
+    _base_cps = 0.10  # base changepoint_prior_scale
     if regime in ("bull", "bear"):
-        cps = 0.15  # Trending regime: higher changepoint sensitivity
+        cps = _base_cps * 1.2  # Trending regime: higher changepoint sensitivity
     else:
-        cps = 0.03  # Sideways regime: lower changepoint sensitivity
+        cps = _base_cps * 0.7  # Sideways regime: lower changepoint sensitivity
 
     np.random.seed(42)  # 재현성
     model = Prophet(
@@ -1036,30 +1066,46 @@ def compute_prediction(stock_code: str, date_str: str, pred_days: int,
     trading_days = get_kr_trading_days(df["Date"].max(), pred_days)
     future_dates = pd.DataFrame({"ds": pd.to_datetime(trading_days)})
 
-    # 평균회귀 기반 지표 외삽 (adaptive mean-reversion)
+    # 평균회귀 기반 지표 외삽 (adaptive mean-reversion with half-life)
     last_row = df_f.iloc[-1]
-    MEAN_TARGETS = {"RSI": 50.0, "BB_pct": 0.5, "MACD_hist": 0.0, "OBV_norm": 0.5, "sentiment": 0.0, "kospi_ret20": 0.0}
+    MEAN_TARGETS = {"RSI": 50.0, "BB_pct": 0.5, "MACD_hist": 0.0, "OBV_norm": 0.5, "sentiment": 0.0, "kospi_ret": 0.0}
 
-    # Adaptive reversion speeds
-    _rsi_val = float(last_row["RSI"])
-    _rsi_theta = 0.1 + 0.3 * min(abs(_rsi_val - 50.0) / 50.0, 1.0)  # Further from 50 = faster reversion
-    _macd_theta = 0.35 if regime == "sideways" else 0.20  # Sideways = faster reversion to 0
-    REVERT_SPEED = {
-        "RSI": _rsi_theta,
-        "BB_pct": 0.3,
-        "MACD_hist": _macd_theta,
-        "OBV_norm": 0.1,
-        "sentiment": 0.3,
-        "kospi_ret20": 0.15,
-    }
+    # Adaptive theta per regressor: calculate half-life from autocorrelation lag-1
+    # half_life = -log(2) / log(autocorrelation_lag1)
+    # theta = 1 - exp(-log(2) / half_life), clamped to [0.05, 0.5]
+    _mr_regressors = ["RSI", "MACD_hist", "BB_pct", "OBV_norm", "sentiment"]
+    REVERT_SPEED = {}
+    for _mr_col in _mr_regressors:
+        try:
+            _series = df_f[_mr_col].dropna()
+            if len(_series) > 30:
+                _ac1 = float(_series.autocorr(lag=1))
+                if 0 < _ac1 < 1:
+                    _half_life = -np.log(2) / np.log(_ac1)
+                    _theta = 1 - np.exp(-np.log(2) / max(_half_life, 1.0))
+                    REVERT_SPEED[_mr_col] = float(np.clip(_theta, 0.05, 0.5))
+                else:
+                    REVERT_SPEED[_mr_col] = 0.15  # fallback for non-mean-reverting
+            else:
+                REVERT_SPEED[_mr_col] = 0.15
+        except Exception:
+            REVERT_SPEED[_mr_col] = 0.15
+
+    # KOSPI daily returns: use mean of last 5 days for extrapolation
+    _kospi_last5_mean = float(df_f["kospi_ret"].iloc[-5:].mean()) if len(df_f) >= 5 else 0.0
 
     for col in REGRESSOR_COLS:
         vals, curr_val = [], float(last_row[col])
-        mu = MEAN_TARGETS[col]
-        theta = REVERT_SPEED[col]
-        for step in range(1, pred_days + 1):
-            curr_val = curr_val + theta * (mu - curr_val)
-            vals.append(curr_val)
+        if col == "kospi_ret":
+            # Flat extrapolation using mean of last 5 days
+            for step in range(1, pred_days + 1):
+                vals.append(_kospi_last5_mean)
+        else:
+            mu = MEAN_TARGETS[col]
+            theta = REVERT_SPEED.get(col, 0.15)
+            for step in range(1, pred_days + 1):
+                curr_val = curr_val + theta * (mu - curr_val)
+                vals.append(curr_val)
         future_dates[col] = vals
 
     future_dates["RSI"] = future_dates["RSI"].clip(0, 100)
@@ -1098,11 +1144,11 @@ def compute_prediction(stock_code: str, date_str: str, pred_days: int,
 
     # Regime-based ensemble weights
     if regime == "bull":
-        _w_prophet, _w_gbr = 0.70, 0.30
-    elif regime == "bear":
         _w_prophet, _w_gbr = 0.50, 0.50
+    elif regime == "bear":
+        _w_prophet, _w_gbr = 0.70, 0.30
     else:  # sideways
-        _w_prophet, _w_gbr = 0.40, 0.60
+        _w_prophet, _w_gbr = 0.60, 0.40
     ensemble_pred = prophet_pred * _w_prophet + gbr_pred * _w_gbr
 
     # 클램프 (±15% soft, ±30% hard)
@@ -1759,7 +1805,7 @@ with _tab_analysis:
 
             # 예측 함수에서 계산된 지표를 df에 반영 (차트용)
             _df_ind = pd.DataFrame(_pred_result["df_with_indicators"])
-            _ind_cols = ["RSI", "MACD_hist", "BB_pct", "OBV_norm", "vol_ratio", "ma20_dist", "sentiment", "kospi_ret20"]
+            _ind_cols = ["RSI", "MACD_hist", "BB_pct", "OBV_norm", "vol_ratio", "ma20_dist", "sentiment", "kospi_ret"]
             if len(df) == len(_df_ind):
                 for _ind_col in _ind_cols:
                     if _ind_col in _df_ind.columns:
