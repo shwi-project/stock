@@ -1276,17 +1276,27 @@ def _render_scanner():
         _cached_ai = st.session_state[_scanner_ai_cache_key].get(_code)
         _score_cls = "score-high" if _score >= 60 else ("score-mid" if _score >= 40 else "score-low")
 
-        # 카드 HTML (AI 결과는 별도 렌더 — HTML 깨짐 방지)
-        _card_html = f'''
-        <div class="scanner-card">
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-                <div style="display:flex;align-items:center;gap:8px">
-                    <span class="scanner-rank rank-{_rank if _rank <= 3 else 'other'}">{_rank}</span>
-                    <span style="font-size:0.88rem;font-weight:600;color:#e2e8f0">{_row["name"]}</span>
-                    <span style="font-size:0.68rem;color:#4a5568">{_code}</span>
-                </div>
-                <span class="scanner-score {_score_cls}">{_score:.0f}/100</span>
-            </div>
+        # ── 종목명 줄: 이름 + 스코어 + AI 버튼 (같은 줄, form으로 CSS 분리) ──
+        _submitted = False
+        _col_info, _col_btn = st.columns([8, 2])
+        with _col_info:
+            st.markdown(
+                f'<div style="display:flex;align-items:center;gap:8px;padding:4px 0">'
+                f'<span class="scanner-rank rank-{_rank if _rank <= 3 else "other"}">{_rank}</span>'
+                f'<span style="font-size:0.88rem;font-weight:600;color:#e2e8f0">{_row["name"]}</span>'
+                f'<span style="font-size:0.68rem;color:#4a5568">{_code}</span>'
+                f'<span class="scanner-score {_score_cls}" style="margin-left:auto">{_score:.0f}/100</span>'
+                f'</div>',
+                unsafe_allow_html=True
+            )
+        with _col_btn:
+            if not _cached_ai and "GEMINI_API_KEY" in st.secrets:
+                with st.form(key=f"scanner_{_code}", clear_on_submit=False, border=False):
+                    _submitted = st.form_submit_button("✦ AI 예측내용")
+
+        # ── 카드 본문 (HTML) ──
+        st.markdown(f'''
+        <div class="scanner-card" style="margin-top:-8px">
             <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:8px">
                 <span style="font-family:'JetBrains Mono',monospace;font-size:1rem;font-weight:600;color:#e2e8f0">{_row["price"]:,}원</span>
                 <span style="font-size:0.8rem;color:{_chg_color};font-weight:600">{_chg_arrow} {abs(_row["change_pct"]):.2f}%</span>
@@ -1305,14 +1315,7 @@ def _render_scanner():
             </div>
             <div style="font-size:0.55rem;color:#4a5568">모멘텀 /35 · 진입 /20 · 추세 /25 · 리스크 /20</div>
         </div>
-        '''
-
-        # st.form으로 카드 + 버튼 통합 (검색 버튼 CSS와 완전 분리)
-        _submitted = False
-        with st.form(key=f"scanner_{_code}", clear_on_submit=False, border=False):
-            st.markdown(_card_html, unsafe_allow_html=True)
-            if not _cached_ai and "GEMINI_API_KEY" in st.secrets:
-                _submitted = st.form_submit_button("✦ AI 예측내용")
+        ''', unsafe_allow_html=True)
 
         # AI 결과 (카드 HTML 밖 — Gemini 응답이 카드를 깨뜨리지 않음)
         if _cached_ai:
