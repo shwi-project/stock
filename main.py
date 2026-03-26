@@ -146,11 +146,11 @@ st.markdown("""
     }
     [data-testid="stFormSubmitButton"] > button {
         direction: ltr !important;
-        background: linear-gradient(135deg, #1a1f3a, #1e2d4a) !important;
-        border: 1px solid rgba(99,102,241,0.35) !important;
-        color: #c4b5fd !important;
+        background: #2d3a55 !important;
+        border: 1px solid #4a5568 !important;
+        color: #e2e8f0 !important;
         font-family: 'Noto Sans KR', sans-serif !important;
-        font-size: 9px !important;
+        font-size: 7px !important;
         font-weight: 500 !important;
         letter-spacing: 0.3px !important;
         padding: 0 5px !important;
