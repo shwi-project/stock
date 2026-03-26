@@ -1245,25 +1245,17 @@ with _tab_scanner:
             _cached_ai = st.session_state[_scanner_ai_cache_key].get(_code)
 
             with st.expander(f"{_medal}  {_row['name']}  ({_row['code']})  —  {_row['price']:,}원  {_chg_arrow}{abs(_row['change_pct']):.2f}%  ·  SCORE {_score}/100", expanded=False):
-                # 네이티브 Streamlit만 사용 (HTML 없음 = CSS 충돌 없음)
                 st.caption(f"📌 {_signals_txt}")
                 st.caption(f"RSI {_row['rsi']} · ADX {_row.get('adx',0)} · Sharpe {_row.get('sharpe',0)} · 거래량 {_row['vol_ratio']}x")
+                st.caption(f"모멘텀 **{_m:.0f}**/35 · 진입 **{_mr:.0f}**/20 · 추세 **{_t:.0f}**/25 · 리스크 **{_ra:.0f}**/20")
 
-                # 4-Pillar 점수 (columns로 표현)
-                _c1, _c2, _c3, _c4 = st.columns(4)
-                _c1.metric("모멘텀", f"{_m:.0f}/35")
-                _c2.metric("진입", f"{_mr:.0f}/20")
-                _c3.metric("추세", f"{_t:.0f}/25")
-                _c4.metric("리스크", f"{_ra:.0f}/20")
-
-                # AI 브리핑
                 if _cached_ai:
                     st.info(_cached_ai)
                 elif "GEMINI_API_KEY" not in st.secrets:
                     st.caption("🔑 Gemini API 키 미등록")
                 else:
                     _btn_key = f"ai_btn_{_scanner_date}_{_code}"
-                    if st.button(f"🤖 AI 브리핑", key=_btn_key):
+                    if st.button("🤖 AI 브리핑", key=_btn_key, use_container_width=True):
                         with st.spinner("AI 분석 중..."):
                             _ai_text = fetch_scanner_briefing(_code, _row.to_dict(), _scanner_date)
                         if _ai_text:
