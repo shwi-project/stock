@@ -133,13 +133,14 @@ st.markdown("""
         position: relative !important;
         z-index: 10 !important;
     }
-    [data-testid="stForm"] [data-testid="stElementContainer"] {
-        margin-bottom: 0 !important;
-    }
-    [data-testid="stFormSubmitButton"] {
-        display: flex !important;
-        justify-content: flex-end !important;
-        padding-right: 16px !important;
+    [data-testid="stForm"] [data-testid="stVerticalBlock"],
+    [data-testid="stForm"] [data-testid="stElementContainer"],
+    [data-testid="stForm"] [data-testid="stFormSubmitButton"],
+    [data-testid="stForm"] [data-testid="stFormSubmitButton"] > div {
+        height: auto !important;
+        overflow: visible !important;
+        margin: 0 !important;
+        padding: 0 !important;
     }
     [data-testid="stFormSubmitButton"] > button {
         background: rgba(99,102,241,0.08) !important;
@@ -159,8 +160,9 @@ st.markdown("""
         min-width: auto !important;
         white-space: nowrap !important;
         cursor: pointer !important;
-        position: relative !important;
-        top: 16px !important;
+        float: right !important;
+        margin-right: 16px !important;
+        margin-top: 16px !important;
     }
     [data-testid="stFormSubmitButton"] > button:hover {
         background: rgba(99,102,241,0.2) !important;
