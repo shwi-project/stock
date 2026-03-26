@@ -91,14 +91,14 @@ st.markdown("""
     
     /* 검색 돋보기 버튼 전용 스타일 (원본 복원) */
     [data-testid="stHorizontalBlock"] .stButton > button {
-        height: 32px !important;
-        min-height: 32px !important;
-        max-height: 32px !important;
-        width: 36px !important;
-        min-width: 36px !important;
+        height: 40px !important;
+        min-height: 40px !important;
+        max-height: 40px !important;
+        width: 40px !important;
+        min-width: 40px !important;
         padding: 0 !important;
-        line-height: 32px !important;
-        font-size: 0.9rem !important;
+        line-height: 40px !important;
+        font-size: 1.0rem !important;
         margin-bottom: 5px !important;
         margin-left: 0px !important;
         display: flex !important;
@@ -274,11 +274,12 @@ st.markdown("""
     label, [data-testid="stWidgetLabel"] p, [data-testid="stWidgetLabel"] span { color: #c8d6e8 !important; font-size: 0.8rem !important; }
     [data-baseweb="select"] > div, [data-baseweb="select"] > div > div {
         background: #131929 !important; border-color: #2d3a55 !important;
-        min-height: 32px !important; max-height: 32px !important;
-        padding-top: 0 !important; padding-bottom: 0 !important; line-height: 32px !important;
+        min-height: 40px !important; max-height: 40px !important;
+        padding-top: 0 !important; padding-bottom: 0 !important; line-height: 40px !important;
+        font-size: 0.9rem !important;
     }
     [data-baseweb="select"] * { color: #e2e8f0 !important; }
-    [data-baseweb="select"] input { height: 32px !important; }    
+    [data-baseweb="select"] input { height: 40px !important; }    
     .stSelectbox { margin-bottom: 0.3rem !important; }
     [data-baseweb="popover"], [data-baseweb="menu"] { background: #131929 !important; }
     [data-baseweb="option"]       { color: #e2e8f0 !important; background: #131929 !important; }
