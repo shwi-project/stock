@@ -1399,7 +1399,15 @@ def _render_scanner():
         # 캐시 존재 → 즉시 사용 (블로킹 없음, 검색탭 영향 zero)
         _scanner_df = _cached_df_ss
     else:
-        # 최초 로드 또는 새로고침 클릭 → 재계산
+        # 최초 로드: 자동 조회하지 않음 → 버튼으로 수동 조회
+        _load_btn = st.button("🔎 추천 종목 불러오기", key="scanner_load", use_container_width=True)
+        if not _load_btn:
+            st.markdown(
+                '<div style="text-align:center;padding:40px 20px;color:#4a5568;font-size:0.75rem">'
+                '버튼을 눌러 오늘의 추천 종목을 조회하세요</div>',
+                unsafe_allow_html=True
+            )
+            return  # 조회 안 함 → 검색탭 블로킹 zero
         try:
             _loading_placeholder.markdown(
                 '<div style="text-align:center;padding:20px;color:#8b95a5;font-size:0.75rem">'
@@ -1411,10 +1419,10 @@ def _render_scanner():
             st.session_state[_ss_time_key] = _time_mod.time()
             _loading_placeholder.empty()
         except Exception as _scan_err:
-            _scanner_df = st.session_state.get(_ss_cache_key, pd.DataFrame())
+            _scanner_df = pd.DataFrame()
             _loading_placeholder.empty()
-            if _scanner_df.empty:
-                st.error(f"스캔 중 오류: {_scan_err}")
+            st.error(f"스캔 중 오류: {_scan_err}")
+            return
 
     # 종목명 매핑
     if not _scanner_df.empty:
