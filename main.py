@@ -131,7 +131,8 @@ st.markdown("""
         padding: 0 !important;
         margin: 0 !important;
         position: relative !important;
-        z-index: 10 !important;
+        z-index: 999 !important;
+        pointer-events: none !important;
     }
     [data-testid="stForm"],
     [data-testid="stForm"] [data-testid="stVerticalBlockBorderWrapper"],
@@ -141,6 +142,7 @@ st.markdown("""
     [data-testid="stForm"] [data-testid="stFormSubmitButton"] > div {
         direction: rtl !important;
         overflow: visible !important;
+        pointer-events: none !important;
     }
     [data-testid="stFormSubmitButton"] > button {
         direction: ltr !important;
@@ -148,25 +150,27 @@ st.markdown("""
         border: 1px solid rgba(99,102,241,0.35) !important;
         color: #c4b5fd !important;
         font-family: 'Noto Sans KR', sans-serif !important;
-        font-size: 0.50rem !important;
+        font-size: 0.45rem !important;
         font-weight: 500 !important;
-        letter-spacing: 0.8px !important;
-        padding: 0 10px !important;
-        height: 20px !important;
-        min-height: 20px !important;
-        max-height: 20px !important;
-        border-radius: 5px !important;
+        letter-spacing: 0.5px !important;
+        padding: 0 7px !important;
+        height: 17px !important;
+        min-height: 17px !important;
+        max-height: 17px !important;
+        border-radius: 4px !important;
         transition: all 0.2s ease !important;
         width: auto !important;
         min-width: auto !important;
-        max-width: 130px !important;
+        max-width: 100px !important;
         white-space: nowrap !important;
         cursor: pointer !important;
         position: relative !important;
-        top: 24px !important;
+        top: 22px !important;
         margin-right: 16px !important;
-        line-height: 20px !important;
-        box-shadow: 0 1px 4px rgba(99,102,241,0.15) !important;
+        line-height: 17px !important;
+        box-shadow: 0 1px 3px rgba(99,102,241,0.12) !important;
+        pointer-events: all !important;
+        z-index: 999 !important;
     }
     [data-testid="stFormSubmitButton"] > button:hover {
         background: linear-gradient(135deg, #1e2745, #243352) !important;
