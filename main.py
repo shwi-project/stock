@@ -114,6 +114,25 @@ st.markdown("""
         border-color: #4d9fff !important;
     }
 
+    /* 스캐너 AI 브리핑 버튼 */
+    [data-testid="stBaseButton-primary"] {
+        background: linear-gradient(135deg, #1e3a5f, #2d4a7a) !important;
+        border: 1px solid #3b82f6 !important;
+        color: #e2e8f0 !important;
+        font-size: 0.78rem !important;
+        font-weight: 600 !important;
+        padding: 8px 16px !important;
+        border-radius: 8px !important;
+        transition: all 0.2s !important;
+        margin-top: -6px !important;
+        margin-bottom: 8px !important;
+    }
+    [data-testid="stBaseButton-primary"]:hover {
+        background: linear-gradient(135deg, #2d4a7a, #3b5e9e) !important;
+        border-color: #60a5fa !important;
+        box-shadow: 0 0 12px rgba(59,130,246,0.3) !important;
+    }
+
     .ai-box {
         background: linear-gradient(135deg, #0f1a2e 0%, #111827 100%);
         border: 1px solid #1e3a5f; border-left: 3px solid #3b82f6; border-radius: 8px;
@@ -1256,15 +1275,13 @@ with _tab_scanner:
             # AI 브리핑 HTML
             _ai_html = ""
             if _cached_ai:
-                import html as _html_mod
-                _safe_ai = _html_mod.escape(str(_cached_ai))
-                _safe_ai = _safe_ai.replace('\n', '<br>')
                 _ai_html = (
                     '<div style="margin-top:12px;padding:12px 14px;'
-                    'background:#0c1525;border:1px solid #1e3a5f;border-left:3px solid #3b82f6;border-radius:6px">'
-                    '<div style="font-size:0.62rem;font-weight:600;color:#3b82f6;letter-spacing:1.5px;margin-bottom:8px">'
-                    '🤖 AI BRIEFING</div>'
-                    f'<div style="font-size:0.78rem;line-height:1.8;color:#cbd5e0">{_safe_ai}</div>'
+                    'background:linear-gradient(135deg,#0c1525,#111d30);'
+                    'border:1px solid #1e3a5f;border-left:3px solid #3b82f6;border-radius:6px">'
+                    '<div style="font-size:0.62rem;font-weight:600;color:#3b82f6;'
+                    'letter-spacing:1.5px;margin-bottom:8px">🤖 AI BRIEFING</div>'
+                    f'<div style="font-size:0.78rem;line-height:1.8;color:#cbd5e0">{_cached_ai}</div>'
                     '</div>'
                 )
 
@@ -1302,9 +1319,10 @@ with _tab_scanner:
             </div>
             ''', unsafe_allow_html=True)
 
-            # AI 버튼 (캐시 없을 때만, HTML 밖에서 독립적으로)
+            # AI 버튼 (캐시 없을 때만)
             if not _cached_ai and "GEMINI_API_KEY" in st.secrets:
-                if st.button(f"🤖 {_row['name']} AI 브리핑", key=f"ai_{_scanner_date}_{_code}", use_container_width=True):
+                _btn_key = f"ai_{_scanner_date}_{_code}"
+                if st.button(f"🤖  AI 브리핑 받기", key=_btn_key, use_container_width=True, type="primary"):
                     st.session_state["_scanner_ai_trigger"] = _code
                     st.rerun()
 
