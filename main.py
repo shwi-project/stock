@@ -128,6 +128,14 @@ st.markdown("""
         padding: 0 !important;
         background: transparent !important;
     }
+    /* 스캐너 영역 요소 간 여백 최소화 (form 포함 블록만) */
+    [data-testid="stForm"] [data-testid="stElementContainer"] {
+        margin-bottom: 0 !important;
+    }
+    [data-testid="stFormSubmitButton"] {
+        margin-top: -2px !important;
+        margin-bottom: 0 !important;
+    }
     /* 스캐너 AI 버튼 (form submit) */
     [data-testid="stFormSubmitButton"] > button {
         background: linear-gradient(135deg, #1a1f3a, #1e2d4a) !important;
@@ -1293,6 +1301,13 @@ def _render_scanner():
             if not _cached_ai and "GEMINI_API_KEY" in st.secrets:
                 with st.form(key=f"scanner_{_code}", clear_on_submit=False, border=False):
                     _submitted = st.form_submit_button("✦ AI 예측내용")
+            elif _cached_ai:
+                st.markdown(
+                    '<div style="display:flex;align-items:center;justify-content:flex-end;height:28px">'
+                    '<span style="font-size:0.5rem;color:#3b82f6;letter-spacing:0.5px;opacity:0.7">✦ AI</span>'
+                    '</div>',
+                    unsafe_allow_html=True
+                )
 
         # ── 카드 본문 (HTML) ──
         st.markdown(f'''
