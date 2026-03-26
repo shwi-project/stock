@@ -122,26 +122,24 @@ st.markdown("""
         align-items: flex-end !important;
     }
 
-    /* 스캐너 form 컨테이너 투명화 */
+    /* 스캐너 AI form — 카드 앞, height:0, 버튼만 카드 우측 상단에 겹침 */
     [data-testid="stForm"] {
         border: none !important;
-        padding: 0 !important;
         background: transparent !important;
+        height: 0 !important;
+        overflow: visible !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        position: relative !important;
+        z-index: 10 !important;
     }
-    /* 스캐너 영역 요소 간 여백 최소화 (form 포함 블록만) */
     [data-testid="stForm"] [data-testid="stElementContainer"] {
         margin-bottom: 0 !important;
     }
-    /* 스캐너 AI form — 카드 앞에서 height:0, 카드 헤더 우측 위에 겹침 */
-    [data-testid="stForm"] {
-        height: 0 !important;
-        overflow: visible !important;
-        position: relative !important;
-        z-index: 10 !important;
+    [data-testid="stFormSubmitButton"] {
         display: flex !important;
         justify-content: flex-end !important;
-        padding: 0 16px 0 0 !important;
-        margin: 0 !important;
+        padding-right: 16px !important;
     }
     [data-testid="stFormSubmitButton"] > button {
         background: rgba(99,102,241,0.08) !important;
@@ -160,10 +158,9 @@ st.markdown("""
         width: auto !important;
         min-width: auto !important;
         white-space: nowrap !important;
-        margin: 0 !important;
         cursor: pointer !important;
         position: relative !important;
-        top: 14px !important;
+        top: 16px !important;
     }
     [data-testid="stFormSubmitButton"] > button:hover {
         background: rgba(99,102,241,0.2) !important;
