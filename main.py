@@ -1229,7 +1229,7 @@ _tab_analysis, _tab_scanner = st.tabs(["📊 종목 검색", "🔎 추천 종목
 
 # ─── 탭 1: 종목 검색 (검색바 + 분석 결과) ───
 with _tab_analysis:
-    _col1, _col2 = st.columns([9, 1], vertical_alignment="bottom", gap="small")
+    _col1, _col2 = st.columns([20, 1], vertical_alignment="bottom", gap="small")
     with _col1:
         selected_label = st.selectbox(
             "종목 검색",
