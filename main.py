@@ -926,10 +926,10 @@ def get_kr_trading_days(start_date, count):
 def detect_regime(df: pd.DataFrame) -> str:
     """Detect market regime: 'bull', 'bear', or 'sideways'.
 
-    Uses ADX, price vs MA60, and MACD histogram to classify.
-    - Bull: ADX > 25 AND price > MA60 AND MACD_hist > 0
-    - Bear: ADX > 25 AND price < MA60 AND MACD_hist < 0
-    - Sideways: ADX <= 25 OR mixed signals
+    Uses ADX (trend strength), price vs MA20/MA60, and recent returns.
+    - Bull:  ADX > 25 AND price > MA20 > MA60
+    - Bear:  ADX > 25 AND price < MA20 < MA60
+    - Sideways: otherwise
     """
     close = df["Close"]
     high = df["High"]
@@ -942,21 +942,14 @@ def detect_regime(df: pd.DataFrame) -> str:
     adx_data = _calc_adx(high, low, close)
     adx_val = adx_data["adx"]
 
-    # Price vs MA60
+    # Price vs MA20 and MA60
+    ma20 = float(close.rolling(20).mean().iloc[-1])
     ma60 = float(close.rolling(60).mean().iloc[-1])
     cur_price = float(close.iloc[-1])
-    price_above_ma60 = cur_price > ma60
 
-    # MACD histogram
-    ema12 = close.ewm(span=12, adjust=False).mean()
-    ema26 = close.ewm(span=26, adjust=False).mean()
-    macd_line = ema12 - ema26
-    signal_line = macd_line.ewm(span=9, adjust=False).mean()
-    macd_hist_val = float((macd_line - signal_line).iloc[-1])
-
-    if adx_val > 25 and price_above_ma60 and macd_hist_val > 0:
+    if adx_val > 25 and cur_price > ma20 and ma20 > ma60:
         return "bull"
-    elif adx_val > 25 and not price_above_ma60 and macd_hist_val < 0:
+    elif adx_val > 25 and cur_price < ma20 and ma20 < ma60:
         return "bear"
     else:
         return "sideways"
@@ -1050,15 +1043,14 @@ def compute_prediction(stock_code: str, date_str: str, pred_days: int,
     df_f = df[["Date", "Close"] + REGRESSOR_COLS].rename(
         columns={"Date": "ds", "Close": "y"}
     )
-    df_f[REGRESSOR_COLS] = df_f[REGRESSOR_COLS].ffill()
-    df_f = df_f.dropna()
+    df_f[REGRESSOR_COLS] = df_f[REGRESSOR_COLS].ffill().bfill()
+    df_f = df_f.dropna(subset=["ds", "y"])  # keep only rows with valid date and price
 
     # 적응형 Prophet 하이퍼파라미터 (regime-aware)
-    _base_cps = 0.10  # base changepoint_prior_scale
     if regime in ("bull", "bear"):
-        cps = _base_cps * 1.2  # Trending regime: higher changepoint sensitivity
+        cps = 0.15  # Trending regime: higher changepoint sensitivity
     else:
-        cps = _base_cps * 0.7  # Sideways regime: lower changepoint sensitivity
+        cps = 0.05  # Sideways regime: lower changepoint sensitivity
 
     np.random.seed(42)  # 재현성
     model = Prophet(
@@ -1130,9 +1122,13 @@ def compute_prediction(stock_code: str, date_str: str, pred_days: int,
 
     # GradientBoosting 앙상블
     GBR_FEATURES = ["RSI", "MACD_hist", "BB_pct", "OBV_norm", "vol_ratio", "ma20_dist"]
-    df_gb = df.dropna(subset=GBR_FEATURES + ["Close"]).copy()
+    df_gb = df.copy()
+    df_gb[GBR_FEATURES] = df_gb[GBR_FEATURES].ffill().bfill()
     df_gb["target"] = df_gb["Close"].shift(-1)
-    df_gb = df_gb.dropna(subset=["target"])
+    df_gb = df_gb.dropna(subset=["target"] + GBR_FEATURES + ["Close"])
+
+    # GBR max_depth: trending regimes get deeper trees
+    _gbr_max_depth = 5 if regime in ("bull", "bear") else 3
 
     gbr_pred = prophet_pred
     if len(df_gb) > 30:
@@ -1140,7 +1136,7 @@ def compute_prediction(stock_code: str, date_str: str, pred_days: int,
             X_gb = df_gb[GBR_FEATURES].values
             y_gb = df_gb["target"].values
             gbr = GradientBoostingRegressor(
-                n_estimators=100, max_depth=4, learning_rate=0.1,
+                n_estimators=100, max_depth=_gbr_max_depth, learning_rate=0.1,
                 subsample=0.8, random_state=42
             )
             gbr.fit(X_gb, y_gb)
@@ -1150,12 +1146,10 @@ def compute_prediction(stock_code: str, date_str: str, pred_days: int,
             gbr_pred = prophet_pred
 
     # Regime-based ensemble weights
-    if regime == "bull":
-        _w_prophet, _w_gbr = 0.50, 0.50
-    elif regime == "bear":
-        _w_prophet, _w_gbr = 0.70, 0.30
+    if regime in ("bull", "bear"):
+        _w_prophet, _w_gbr = 0.50, 0.50  # Trending: equal weight
     else:  # sideways
-        _w_prophet, _w_gbr = 0.60, 0.40
+        _w_prophet, _w_gbr = 0.70, 0.30  # Sideways: Prophet-heavy
     ensemble_pred = prophet_pred * _w_prophet + gbr_pred * _w_gbr
 
     # 클램프 (±15% soft, ±30% hard)
@@ -1195,23 +1189,21 @@ def compute_prediction(stock_code: str, date_str: str, pred_days: int,
                                       _current_close * (1 - _hard_limit_pct))
 
     # 백테스팅 — proper walk-forward cross-validation (no future data leakage)
-    # Train on data[:i], predict data[i], collect errors
-    # Minimum training window: 200 days, test on last 60 trading days
+    # Expanding window: train on [0:i], predict [i], compare with actual
+    # Minimum training window: 60 data points
     backtest_mape = None
-    _min_train_window = 200
+    _min_train_window = 60
     _n_test_days = 60
     if len(df_gb) > (_min_train_window + _n_test_days):
         try:
             X_bt = df_gb[GBR_FEATURES].values
             y_bt = df_gb["target"].values
             _total = len(X_bt)
-            _test_start = _total - _n_test_days
+            _test_start = max(_min_train_window, _total - _n_test_days)
             bt_pred_list, bt_actual_list = [], []
             for i in range(_test_start, _total):
-                if i < _min_train_window:
-                    continue
                 gbr_bt = GradientBoostingRegressor(
-                    n_estimators=100, max_depth=4, learning_rate=0.1,
+                    n_estimators=100, max_depth=_gbr_max_depth, learning_rate=0.1,
                     subsample=0.8, random_state=42
                 )
                 gbr_bt.fit(X_bt[:i], y_bt[:i])
