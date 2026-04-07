@@ -404,22 +404,25 @@ _FALLBACK_UNIVERSE = [
 @st.cache_data(ttl=3600, show_spinner=False)
 def _fetch_investor_data(code: str, start_str: str, end_str: str) -> dict:
     """종목별 외국인/기관 순매수 데이터 (pykrx 개별 조회)."""
-    result = {"foreign_net": 0, "inst_net": 0}
+    result = {"foreign_net": 0, "inst_net": 0, "_debug": ""}
     try:
         from pykrx import stock as krx_stock
         df = krx_stock.get_market_trading_value_by_date(start_str, end_str, code)
         if df is not None and len(df) > 0:
-            # 컬럼: 기관합계, 기타법인, 개인, 외국인합계, 전체
-            for col in ["외국인합계", "외국인"]:
-                if col in df.columns:
+            cols = list(df.columns)
+            result["_debug"] = f"cols={cols}, rows={len(df)}"
+            # 동적 컬럼 검색: "외국인" 포함 컬럼
+            for col in cols:
+                if "외국인" in col and "기타" not in col:
                     result["foreign_net"] = int(df[col].sum())
                     break
-            for col in ["기관합계", "기관"]:
-                if col in df.columns:
+            # "기관" 포함 컬럼
+            for col in cols:
+                if "기관합계" in col or col == "기관":
                     result["inst_net"] = int(df[col].sum())
                     break
-    except Exception:
-        pass
+    except Exception as e:
+        result["_debug"] = f"err={str(e)[:100]}"
     return result
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -830,6 +833,7 @@ def run_scanner(date_str: str) -> pd.DataFrame:
             _inv = _investor_map.get(code, {})
             foreign_net = _inv.get("foreign_net", 0)
             inst_net = _inv.get("inst_net", 0)
+            _inv_debug = _inv.get("_debug", "no_data")
             _bulk = bulk_data.get(code, {})
             per_val = _bulk.get("per", 0)
             pbr_val = _bulk.get("pbr", 0)
@@ -878,7 +882,7 @@ def run_scanner(date_str: str) -> pd.DataFrame:
                 "adx": round(adx_data["adx"], 1), "sharpe": round(sharpe_60d, 2),
                 "macd_hist": round(macd_cur, 2),
                 "signals": signals,
-                "foreign_net": foreign_net, "inst_net": inst_net,
+                "foreign_net": foreign_net, "inst_net": inst_net, "inv_debug": _inv_debug,
                 # Raw scores (Pillar 1 - 상대적 비교 필요한 것들)
                 "_rel_strength": rel_strength, "_roc_20": roc_20,
                 "_sharpe_60d": sharpe_60d, "_atr_pct": atr_pct, "_downside_dev": downside_dev,
@@ -1784,6 +1788,7 @@ def _render_scanner():
                 <div style="flex:{max(_su, 0.5)};background:linear-gradient(135deg,#e53e3e,#c53030);color:#fff;text-align:center;border-radius:0 4px 4px 0;overflow:hidden;white-space:nowrap">수급 {_su:.0f}</div>
             </div>
             <div style="font-size:0.55rem;color:#4a5568">모멘텀 /25 · 진입 /15 · 추세 /20 · 리스크 /15 · 수급 /25</div>
+            <div style="font-size:0.5rem;color:#f59e0b;margin-top:4px">🔧 {_row.get("inv_debug","?")}</div>
         </div>
         '''
 
