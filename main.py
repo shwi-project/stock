@@ -401,27 +401,31 @@ _FALLBACK_UNIVERSE = [
     "086520","247540","028300","196170","058470","259960","323410","257720",
 ]
 
-def _safe_lookup(df, code, col_candidates):
-    """DataFrame에서 code 행, 여러 컬럼명 후보 중 매칭되는 값 반환."""
-    if df is None or len(df) == 0:
-        return 0.0
-    # index 타입 통일 (문자열)
-    idx = str(code)
-    if idx not in df.index:
-        idx = idx.zfill(6)
-    if idx not in df.index:
-        return 0.0
-    for col in col_candidates:
-        if col in df.columns:
-            try:
-                return float(df.loc[idx, col])
-            except (ValueError, TypeError):
-                return 0.0
-    return 0.0
+@st.cache_data(ttl=3600, show_spinner=False)
+def _fetch_investor_data(code: str, start_str: str, end_str: str) -> dict:
+    """종목별 외국인/기관 순매수 데이터 (pykrx 개별 조회)."""
+    result = {"foreign_net": 0, "inst_net": 0}
+    try:
+        from pykrx import stock as krx_stock
+        df = krx_stock.get_market_trading_value_by_date(start_str, end_str, code)
+        if df is not None and len(df) > 0:
+            # 컬럼: 기관합계, 기타법인, 개인, 외국인합계, 전체
+            for col in ["외국인합계", "외국인"]:
+                if col in df.columns:
+                    result["foreign_net"] = int(df[col].sum())
+                    break
+            for col in ["기관합계", "기관"]:
+                if col in df.columns:
+                    result["inst_net"] = int(df[col].sum())
+                    break
+    except Exception:
+        pass
+    return result
 
 @st.cache_data(ttl=600, show_spinner=False)
 def _pre_screen_market(date_str: str, top_n: int = 150) -> tuple:
-    """전종목 벌크 스크리닝: 거래량 급증 + 외국인/기관 순매수 + 시총 필터.
+    """전종목 벌크 스크리닝: 거래량 + 시총 + PER/PBR 기반.
+    외국인/기관 순매수는 run_scanner에서 종목별로 조회.
     Returns (candidate_codes: list, bulk_data: dict[code -> dict])
     """
     bulk_data = {}
@@ -429,7 +433,6 @@ def _pre_screen_market(date_str: str, top_n: int = 150) -> tuple:
 
     try:
         from pykrx import stock as krx_stock
-        start_5d = (datetime.strptime(date_str, "%Y%m%d") - timedelta(days=10)).strftime("%Y%m%d")
 
         # ── 1. 전종목 OHLCV (당일) ──
         ohlcv_df = krx_stock.get_market_ohlcv_by_ticker(date_str, market="ALL")
@@ -446,35 +449,7 @@ def _pre_screen_market(date_str: str, top_n: int = 150) -> tuple:
         except Exception:
             pass
 
-        # ── 3. 외국인 순매수 (KOSPI/KOSDAQ 분리 후 합치기) ──
-        foreign_frames = []
-        for mkt in ["KOSPI", "KOSDAQ"]:
-            try:
-                df = krx_stock.get_market_net_purchases_of_equities_by_ticker(
-                    start_5d, date_str, market=mkt, investor="외국인"
-                )
-                if df is not None and len(df) > 0:
-                    df.index = df.index.astype(str)
-                    foreign_frames.append(df)
-            except Exception:
-                pass
-        foreign_df = pd.concat(foreign_frames) if foreign_frames else None
-
-        # ── 4. 기관 순매수 ──
-        inst_frames = []
-        for mkt in ["KOSPI", "KOSDAQ"]:
-            try:
-                df = krx_stock.get_market_net_purchases_of_equities_by_ticker(
-                    start_5d, date_str, market=mkt, investor="기관합계"
-                )
-                if df is not None and len(df) > 0:
-                    df.index = df.index.astype(str)
-                    inst_frames.append(df)
-            except Exception:
-                pass
-        inst_df = pd.concat(inst_frames) if inst_frames else None
-
-        # ── 5. 펀더멘탈 (PER, PBR) ──
+        # ── 3. 펀더멘탈 (PER, PBR) ──
         fund_df = None
         try:
             fund_df = krx_stock.get_market_fundamental_by_ticker(date_str, market="ALL")
@@ -484,7 +459,6 @@ def _pre_screen_market(date_str: str, top_n: int = 150) -> tuple:
             pass
 
         # ── 종합 스코어링 ──
-        _net_col = ["순매수거래대금", "순매수"]
         for code in ohlcv_df.index:
             try:
                 row = ohlcv_df.loc[code]
@@ -495,34 +469,32 @@ def _pre_screen_market(date_str: str, top_n: int = 150) -> tuple:
                 if close < 1000 or volume < 1000:
                     continue
 
-                marcap = _safe_lookup(cap_df, code, ["시가총액"])
+                marcap = 0.0
+                if cap_df is not None and code in cap_df.index:
+                    marcap = float(cap_df.loc[code, "시가총액"])
                 if marcap < 100_000_000_000:
                     continue
 
                 vol_score = min(volume / 1_000_000, 5.0)
 
-                foreign_net = _safe_lookup(foreign_df, code, _net_col)
-                foreign_score = np.clip(foreign_net / 10_000_000_000, -2, 3)
-
-                inst_net = _safe_lookup(inst_df, code, _net_col)
-                inst_score = np.clip(inst_net / 10_000_000_000, -2, 3)
-
-                per_val = _safe_lookup(fund_df, code, ["PER"])
-                pbr_val = _safe_lookup(fund_df, code, ["PBR"])
+                per_val, pbr_val = 0.0, 0.0
+                if fund_df is not None and code in fund_df.index:
+                    if "PER" in fund_df.columns:
+                        per_val = float(fund_df.loc[code, "PER"])
+                    if "PBR" in fund_df.columns:
+                        pbr_val = float(fund_df.loc[code, "PBR"])
                 value_score = 0
                 if 0 < per_val < 15:
                     value_score += 1.0
                 if 0 < pbr_val < 1.5:
                     value_score += 1.0
 
-                pre_score = vol_score + foreign_score * 2 + inst_score * 1.5 + value_score
+                pre_score = vol_score + value_score
 
                 code_str = str(code).zfill(6)
                 all_scores[code_str] = pre_score
                 bulk_data[code_str] = {
                     "marcap": marcap,
-                    "foreign_net": foreign_net,
-                    "inst_net": inst_net,
                     "per": per_val,
                     "pbr": pbr_val,
                     "change_pct": change_pct,
@@ -658,14 +630,19 @@ def run_scanner(date_str: str) -> pd.DataFrame:
     except Exception:
         pass
 
-    # ── Pass 0: OHLCV 병렬 다운로드 ──
+    # ── Pass 0: OHLCV + 투자자 데이터 병렬 다운로드 ──
     _ohlcv_map = {}
+    _investor_map = {}
     _fail_count = 0
+    _inv_start = (datetime.strptime(date_str, "%Y%m%d") - timedelta(days=10)).strftime("%Y%m%d")
     def _fetch_one(code):
         return code, _fetch_ohlcv(code, start_str, date_str)
+    def _fetch_inv(code):
+        return code, _fetch_investor_data(code, _inv_start, date_str)
     with ThreadPoolExecutor(max_workers=10) as executor:
-        futures = {executor.submit(_fetch_one, c): c for c in scanner_universe}
-        for fut in as_completed(futures):
+        # OHLCV
+        ohlcv_futures = {executor.submit(_fetch_one, c): c for c in scanner_universe}
+        for fut in as_completed(ohlcv_futures):
             try:
                 code, ohlcv = fut.result()
                 if ohlcv is not None and len(ohlcv) >= 60:
@@ -674,6 +651,14 @@ def run_scanner(date_str: str) -> pd.DataFrame:
                     _fail_count += 1
             except Exception:
                 _fail_count += 1
+        # 투자자 데이터 (OHLCV 성공한 종목만)
+        inv_futures = {executor.submit(_fetch_inv, c): c for c in _ohlcv_map}
+        for fut in as_completed(inv_futures):
+            try:
+                code, inv_data = fut.result()
+                _investor_map[code] = inv_data
+            except Exception:
+                pass
 
     # ── Pass 1: 모든 종목 raw factor 수집 ──
     raw_results = []
@@ -841,10 +826,11 @@ def run_scanner(date_str: str) -> pd.DataFrame:
             prev_close = float(close.iloc[-2]) if n >= 2 else cp
             change_pct = round((cp - prev_close) / max(prev_close, 1) * 100, 2)
 
-            # ─── 외국인/기관 순매수 (벌크 데이터) ───
+            # ─── 외국인/기관 순매수 (종목별 개별 조회) ───
+            _inv = _investor_map.get(code, {})
+            foreign_net = _inv.get("foreign_net", 0)
+            inst_net = _inv.get("inst_net", 0)
             _bulk = bulk_data.get(code, {})
-            foreign_net = _bulk.get("foreign_net", 0)
-            inst_net = _bulk.get("inst_net", 0)
             per_val = _bulk.get("per", 0)
             pbr_val = _bulk.get("pbr", 0)
 
