@@ -406,140 +406,119 @@ def _pre_screen_market(date_str: str, top_n: int = 150) -> tuple:
     """전종목 벌크 스크리닝: 거래량 급증 + 외국인/기관 순매수 + 시총 필터.
     Returns (candidate_codes: list, bulk_data: dict[code -> dict])
     """
-    from pykrx import stock as krx_stock
-
     bulk_data = {}
     all_scores = {}
 
     try:
-        # ── 1. 전종목 OHLCV (당일) ──
-        ohlcv_today = {}
-        for mkt in ["KOSPI", "KOSDAQ"]:
-            df = krx_stock.get_market_ohlcv_by_ticker(date_str, market=mkt)
-            if df is not None and len(df) > 0:
-                ohlcv_today[mkt] = df
+        from pykrx import stock as krx_stock
+        start_5d = (datetime.strptime(date_str, "%Y%m%d") - timedelta(days=10)).strftime("%Y%m%d")
+
+        # ── 1. 전종목 OHLCV (당일, ALL=코스피+코스닥) ──
+        ohlcv_df = krx_stock.get_market_ohlcv_by_ticker(date_str, market="ALL")
 
         # ── 2. 전종목 시가총액 ──
-        cap_all = {}
-        for mkt in ["KOSPI", "KOSDAQ"]:
-            df = krx_stock.get_market_cap_by_ticker(date_str, market=mkt)
-            if df is not None and len(df) > 0:
-                cap_all[mkt] = df
+        cap_df = krx_stock.get_market_cap_by_ticker(date_str, market="ALL")
 
         # ── 3. 외국인 순매수 (최근 5영업일) ──
-        start_5d = (datetime.strptime(date_str, "%Y%m%d") - timedelta(days=10)).strftime("%Y%m%d")
-        foreign_all = {}
-        for mkt in ["KOSPI", "KOSDAQ"]:
-            try:
-                df = krx_stock.get_market_net_purchases_of_equities_by_ticker(
-                    start_5d, date_str, market=mkt, investor="외국인"
-                )
-                if df is not None and len(df) > 0:
-                    foreign_all[mkt] = df
-            except Exception:
-                pass
+        foreign_df = pd.DataFrame()
+        try:
+            foreign_df = krx_stock.get_market_net_purchases_of_equities_by_ticker(
+                start_5d, date_str, market="ALL", investor="외국인"
+            )
+        except Exception:
+            pass
 
         # ── 4. 기관 순매수 (최근 5영업일) ──
-        inst_all = {}
-        for mkt in ["KOSPI", "KOSDAQ"]:
-            try:
-                df = krx_stock.get_market_net_purchases_of_equities_by_ticker(
-                    start_5d, date_str, market=mkt, investor="기관합계"
-                )
-                if df is not None and len(df) > 0:
-                    inst_all[mkt] = df
-            except Exception:
-                pass
+        inst_df = pd.DataFrame()
+        try:
+            inst_df = krx_stock.get_market_net_purchases_of_equities_by_ticker(
+                start_5d, date_str, market="ALL", investor="기관합계"
+            )
+        except Exception:
+            pass
 
         # ── 5. 펀더멘탈 (PER, PBR) ──
-        fund_all = {}
-        for mkt in ["KOSPI", "KOSDAQ"]:
-            try:
-                df = krx_stock.get_market_fundamental_by_ticker(date_str, market=mkt)
-                if df is not None and len(df) > 0:
-                    fund_all[mkt] = df
-            except Exception:
-                pass
+        fund_df = pd.DataFrame()
+        try:
+            fund_df = krx_stock.get_market_fundamental_by_ticker(date_str, market="ALL")
+        except Exception:
+            pass
+
+        if ohlcv_df is None or len(ohlcv_df) == 0:
+            return _FALLBACK_UNIVERSE, {}
 
         # ── 종합 스코어링 ──
-        for mkt in ["KOSPI", "KOSDAQ"]:
-            if mkt not in ohlcv_today:
-                continue
-            ohlcv_df = ohlcv_today[mkt]
-            cap_df = cap_all.get(mkt, pd.DataFrame())
-            foreign_df = foreign_all.get(mkt, pd.DataFrame())
-            inst_df = inst_all.get(mkt, pd.DataFrame())
-            fund_df = fund_all.get(mkt, pd.DataFrame())
+        for code in ohlcv_df.index:
+            try:
+                row = ohlcv_df.loc[code]
+                close = float(row.get("종가", 0))
+                volume = float(row.get("거래량", 0))
+                change_pct = float(row.get("등락률", 0))
 
-            for code in ohlcv_df.index:
-                try:
-                    row = ohlcv_df.loc[code]
-                    close = float(row["종가"]) if "종가" in row.index else 0
-                    volume = float(row["거래량"]) if "거래량" in row.index else 0
-                    change_pct = float(row["등락률"]) if "등락률" in row.index else 0
-
-                    # 최소 필터: 가격 1000원 이상, 거래량 존재
-                    if close < 1000 or volume < 1000:
-                        continue
-
-                    # 시가총액 필터 (최소 1000억)
-                    marcap = 0
-                    if code in cap_df.index:
-                        marcap = float(cap_df.loc[code, "시가총액"])
-                    if marcap < 100_000_000_000:
-                        continue
-
-                    # 거래량 점수 (등락률 기반 추정 — 급등 시 거래량도 급증)
-                    vol_score = min(volume / 1_000_000, 5.0)  # 백만주 단위 정규화
-
-                    # 외국인 순매수 점수
-                    foreign_net = 0
-                    if code in foreign_df.index:
-                        foreign_net = float(foreign_df.loc[code, "순매수"] if "순매수" in foreign_df.columns else 0)
-                    foreign_score = np.clip(foreign_net / 10_000_000_000, -2, 3)  # 100억 단위 정규화
-
-                    # 기관 순매수 점수
-                    inst_net = 0
-                    if code in inst_df.index:
-                        inst_net = float(inst_df.loc[code, "순매수"] if "순매수" in inst_df.columns else 0)
-                    inst_score = np.clip(inst_net / 10_000_000_000, -2, 3)
-
-                    # PER/PBR (저평가 보너스)
-                    per_val, pbr_val = 0, 0
-                    if code in fund_df.index:
-                        per_val = float(fund_df.loc[code, "PER"]) if "PER" in fund_df.columns else 0
-                        pbr_val = float(fund_df.loc[code, "PBR"]) if "PBR" in fund_df.columns else 0
-                    value_score = 0
-                    if 0 < per_val < 15:
-                        value_score += 1.0
-                    if 0 < pbr_val < 1.5:
-                        value_score += 1.0
-
-                    # 종합 프리스크린 점수
-                    pre_score = vol_score + foreign_score * 2 + inst_score * 1.5 + value_score
-
-                    code_str = str(code).zfill(6)
-                    all_scores[code_str] = pre_score
-                    bulk_data[code_str] = {
-                        "market": mkt,
-                        "marcap": marcap,
-                        "foreign_net": foreign_net,
-                        "inst_net": inst_net,
-                        "per": per_val,
-                        "pbr": pbr_val,
-                        "change_pct": change_pct,
-                    }
-                except Exception:
+                if close < 1000 or volume < 1000:
                     continue
 
+                # 시가총액 필터 (최소 1000억)
+                marcap = 0
+                if cap_df is not None and code in cap_df.index:
+                    marcap = float(cap_df.loc[code, "시가총액"])
+                if marcap < 100_000_000_000:
+                    continue
+
+                vol_score = min(volume / 1_000_000, 5.0)
+
+                # 외국인 순매수 (순매수거래대금 컬럼)
+                foreign_net = 0
+                if foreign_df is not None and len(foreign_df) > 0 and code in foreign_df.index:
+                    for col in ["순매수거래대금", "순매수"]:
+                        if col in foreign_df.columns:
+                            foreign_net = float(foreign_df.loc[code, col])
+                            break
+                foreign_score = np.clip(foreign_net / 10_000_000_000, -2, 3)
+
+                # 기관 순매수
+                inst_net = 0
+                if inst_df is not None and len(inst_df) > 0 and code in inst_df.index:
+                    for col in ["순매수거래대금", "순매수"]:
+                        if col in inst_df.columns:
+                            inst_net = float(inst_df.loc[code, col])
+                            break
+                inst_score = np.clip(inst_net / 10_000_000_000, -2, 3)
+
+                # PER/PBR
+                per_val, pbr_val = 0.0, 0.0
+                if fund_df is not None and len(fund_df) > 0 and code in fund_df.index:
+                    if "PER" in fund_df.columns:
+                        per_val = float(fund_df.loc[code, "PER"])
+                    if "PBR" in fund_df.columns:
+                        pbr_val = float(fund_df.loc[code, "PBR"])
+                value_score = 0
+                if 0 < per_val < 15:
+                    value_score += 1.0
+                if 0 < pbr_val < 1.5:
+                    value_score += 1.0
+
+                pre_score = vol_score + foreign_score * 2 + inst_score * 1.5 + value_score
+
+                code_str = str(code).zfill(6)
+                all_scores[code_str] = pre_score
+                bulk_data[code_str] = {
+                    "marcap": marcap,
+                    "foreign_net": foreign_net,
+                    "inst_net": inst_net,
+                    "per": per_val,
+                    "pbr": pbr_val,
+                    "change_pct": change_pct,
+                }
+            except Exception:
+                continue
+
     except Exception:
-        # pykrx 전체 실패 시 폴백
         return _FALLBACK_UNIVERSE, {}
 
     if not all_scores:
         return _FALLBACK_UNIVERSE, {}
 
-    # 점수 상위 top_n 추출
     sorted_codes = sorted(all_scores, key=all_scores.get, reverse=True)[:top_n]
     return sorted_codes, bulk_data
 
