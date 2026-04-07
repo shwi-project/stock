@@ -401,46 +401,24 @@ _FALLBACK_UNIVERSE = [
     "086520","247540","028300","196170","058470","259960","323410","257720",
 ]
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def _fetch_investor_data(code: str, start_str: str, end_str: str, _v: int = 2) -> dict:
-    """종목별 외국인/기관 순매수 데이터 (pykrx 개별 조회)."""
-    result = {"foreign_net": 0, "inst_net": 0, "_debug": ""}
-    try:
-        from pykrx import stock as krx_stock
-        df = krx_stock.get_market_trading_value_by_date(start_str, end_str, code)
-        if df is not None and len(df) > 0:
-            cols = list(df.columns)
-            result["_debug"] = f"cols={cols}, rows={len(df)}"
-            # 동적 컬럼 검색: "외국인" 포함 컬럼
-            for col in cols:
-                if "외국인" in col and "기타" not in col:
-                    result["foreign_net"] = int(df[col].sum())
-                    break
-            # "기관" 포함 컬럼
-            for col in cols:
-                if "기관합계" in col or col == "기관":
-                    result["inst_net"] = int(df[col].sum())
-                    break
-    except Exception as e:
-        result["_debug"] = f"err={str(e)[:100]}"
-    return result
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _pre_screen_market(date_str: str, top_n: int = 150) -> tuple:
-    """전종목 벌크 스크리닝: 거래량 + 시총 + PER/PBR 기반.
-    외국인/기관 순매수는 run_scanner에서 종목별로 조회.
+def _pre_screen_market(date_str: str, top_n: int = 150, _v: int = 3) -> tuple:
+    """전종목 벌크 스크리닝: 거래량 + 시총 + 외국인/기관 + PER/PBR.
     Returns (candidate_codes: list, bulk_data: dict[code -> dict])
     """
     bulk_data = {}
     all_scores = {}
+    _inv_debug = "not_fetched"
 
     try:
         from pykrx import stock as krx_stock
+        start_5d = (datetime.strptime(date_str, "%Y%m%d") - timedelta(days=10)).strftime("%Y%m%d")
 
         # ── 1. 전종목 OHLCV (당일) ──
         ohlcv_df = krx_stock.get_market_ohlcv_by_ticker(date_str, market="ALL")
         if ohlcv_df is None or len(ohlcv_df) == 0:
-            return _FALLBACK_UNIVERSE, {}
+            return _FALLBACK_UNIVERSE, {}, "ohlcv_empty"
         ohlcv_df.index = ohlcv_df.index.astype(str)
 
         # ── 2. 전종목 시가총액 ──
@@ -452,7 +430,41 @@ def _pre_screen_market(date_str: str, top_n: int = 150) -> tuple:
         except Exception:
             pass
 
-        # ── 3. 펀더멘탈 (PER, PBR) ──
+        # ── 3. 외국인 순매수 (벌크, KOSPI+KOSDAQ 분리) ──
+        foreign_df = None
+        try:
+            frames = []
+            for mkt in ["KOSPI", "KOSDAQ"]:
+                df = krx_stock.get_market_net_purchases_of_equities_by_ticker(
+                    start_5d, date_str, market=mkt, investor="외국인"
+                )
+                if df is not None and len(df) > 0:
+                    df.index = df.index.astype(str)
+                    frames.append(df)
+            if frames:
+                foreign_df = pd.concat(frames)
+                _inv_debug = f"foreign_cols={list(foreign_df.columns)},rows={len(foreign_df)}"
+        except Exception as e:
+            _inv_debug = f"foreign_err={str(e)[:80]}"
+
+        # ── 4. 기관 순매수 (벌크) ──
+        inst_df = None
+        try:
+            frames = []
+            for mkt in ["KOSPI", "KOSDAQ"]:
+                df = krx_stock.get_market_net_purchases_of_equities_by_ticker(
+                    start_5d, date_str, market=mkt, investor="기관합계"
+                )
+                if df is not None and len(df) > 0:
+                    df.index = df.index.astype(str)
+                    frames.append(df)
+            if frames:
+                inst_df = pd.concat(frames)
+                _inv_debug += f"|inst_cols={list(inst_df.columns)}"
+        except Exception as e:
+            _inv_debug += f"|inst_err={str(e)[:80]}"
+
+        # ── 5. 펀더멘탈 (PER, PBR) ──
         fund_df = None
         try:
             fund_df = krx_stock.get_market_fundamental_by_ticker(date_str, market="ALL")
@@ -480,6 +492,35 @@ def _pre_screen_market(date_str: str, top_n: int = 150) -> tuple:
 
                 vol_score = min(volume / 1_000_000, 5.0)
 
+                # 외국인 순매수 (동적 컬럼 탐색)
+                foreign_net = 0
+                if foreign_df is not None and code in foreign_df.index:
+                    for col in foreign_df.columns:
+                        if "순매수" in col and "대금" in col:
+                            foreign_net = int(foreign_df.loc[code, col])
+                            break
+                    if foreign_net == 0:
+                        for col in foreign_df.columns:
+                            if "순매수" in col:
+                                foreign_net = int(foreign_df.loc[code, col])
+                                break
+
+                # 기관 순매수
+                inst_net = 0
+                if inst_df is not None and code in inst_df.index:
+                    for col in inst_df.columns:
+                        if "순매수" in col and "대금" in col:
+                            inst_net = int(inst_df.loc[code, col])
+                            break
+                    if inst_net == 0:
+                        for col in inst_df.columns:
+                            if "순매수" in col:
+                                inst_net = int(inst_df.loc[code, col])
+                                break
+
+                foreign_score = np.clip(foreign_net / 10_000_000_000, -2, 3)
+                inst_score = np.clip(inst_net / 10_000_000_000, -2, 3)
+
                 per_val, pbr_val = 0.0, 0.0
                 if fund_df is not None and code in fund_df.index:
                     if "PER" in fund_df.columns:
@@ -492,12 +533,14 @@ def _pre_screen_market(date_str: str, top_n: int = 150) -> tuple:
                 if 0 < pbr_val < 1.5:
                     value_score += 1.0
 
-                pre_score = vol_score + value_score
+                pre_score = vol_score + foreign_score * 2 + inst_score * 1.5 + value_score
 
                 code_str = str(code).zfill(6)
                 all_scores[code_str] = pre_score
                 bulk_data[code_str] = {
                     "marcap": marcap,
+                    "foreign_net": foreign_net,
+                    "inst_net": inst_net,
                     "per": per_val,
                     "pbr": pbr_val,
                     "change_pct": change_pct,
@@ -505,14 +548,14 @@ def _pre_screen_market(date_str: str, top_n: int = 150) -> tuple:
             except Exception:
                 continue
 
-    except Exception:
-        return _FALLBACK_UNIVERSE, {}
+    except Exception as e:
+        return _FALLBACK_UNIVERSE, {}, f"outer_err={str(e)[:80]}"
 
     if not all_scores:
-        return _FALLBACK_UNIVERSE, {}
+        return _FALLBACK_UNIVERSE, {}, "no_scores"
 
     sorted_codes = sorted(all_scores, key=all_scores.get, reverse=True)[:top_n]
-    return sorted_codes, bulk_data
+    return sorted_codes, bulk_data, _inv_debug
 
 
 # ─────────────────────────────────────────────
@@ -617,9 +660,9 @@ def _calc_bollinger(close: pd.Series, period: int = 20, std_mult: float = 2.0) -
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def run_scanner(date_str: str, _v: int = 2) -> pd.DataFrame:
+def run_scanner(date_str: str, _v: int = 3) -> pd.DataFrame:
     """멀티팩터 퀀트 스캐너: 4-Pillar 모델로 종목 스코어링."""
-    scanner_universe, bulk_data = _pre_screen_market(date_str)
+    scanner_universe, bulk_data, _inv_debug_info = _pre_screen_market(date_str)
     start_str = (datetime.strptime(date_str, "%Y%m%d") - timedelta(days=250)).strftime("%Y-%m-%d")
 
     # ── KOSPI 벤치마크 데이터 ──
@@ -633,17 +676,12 @@ def run_scanner(date_str: str, _v: int = 2) -> pd.DataFrame:
     except Exception:
         pass
 
-    # ── Pass 0: OHLCV + 투자자 데이터 병렬 다운로드 ──
+    # ── Pass 0: OHLCV 병렬 다운로드 ──
     _ohlcv_map = {}
-    _investor_map = {}
     _fail_count = 0
-    _inv_start = (datetime.strptime(date_str, "%Y%m%d") - timedelta(days=10)).strftime("%Y%m%d")
     def _fetch_one(code):
         return code, _fetch_ohlcv(code, start_str, date_str)
-    def _fetch_inv(code):
-        return code, _fetch_investor_data(code, _inv_start, date_str)
     with ThreadPoolExecutor(max_workers=10) as executor:
-        # OHLCV
         ohlcv_futures = {executor.submit(_fetch_one, c): c for c in scanner_universe}
         for fut in as_completed(ohlcv_futures):
             try:
@@ -654,14 +692,6 @@ def run_scanner(date_str: str, _v: int = 2) -> pd.DataFrame:
                     _fail_count += 1
             except Exception:
                 _fail_count += 1
-        # 투자자 데이터 (OHLCV 성공한 종목만)
-        inv_futures = {executor.submit(_fetch_inv, c): c for c in _ohlcv_map}
-        for fut in as_completed(inv_futures):
-            try:
-                code, inv_data = fut.result()
-                _investor_map[code] = inv_data
-            except Exception:
-                pass
 
     # ── Pass 1: 모든 종목 raw factor 수집 ──
     raw_results = []
@@ -829,12 +859,10 @@ def run_scanner(date_str: str, _v: int = 2) -> pd.DataFrame:
             prev_close = float(close.iloc[-2]) if n >= 2 else cp
             change_pct = round((cp - prev_close) / max(prev_close, 1) * 100, 2)
 
-            # ─── 외국인/기관 순매수 (종목별 개별 조회) ───
-            _inv = _investor_map.get(code, {})
-            foreign_net = _inv.get("foreign_net", 0)
-            inst_net = _inv.get("inst_net", 0)
-            _inv_debug = _inv.get("_debug", "no_data")
+            # ─── 외국인/기관 순매수 + PER/PBR (벌크 데이터) ───
             _bulk = bulk_data.get(code, {})
+            foreign_net = _bulk.get("foreign_net", 0)
+            inst_net = _bulk.get("inst_net", 0)
             per_val = _bulk.get("per", 0)
             pbr_val = _bulk.get("pbr", 0)
 
@@ -882,7 +910,7 @@ def run_scanner(date_str: str, _v: int = 2) -> pd.DataFrame:
                 "adx": round(adx_data["adx"], 1), "sharpe": round(sharpe_60d, 2),
                 "macd_hist": round(macd_cur, 2),
                 "signals": signals,
-                "foreign_net": foreign_net, "inst_net": inst_net, "inv_debug": _inv_debug,
+                "foreign_net": foreign_net, "inst_net": inst_net, "inv_debug": _inv_debug_info,
                 # Raw scores (Pillar 1 - 상대적 비교 필요한 것들)
                 "_rel_strength": rel_strength, "_roc_20": roc_20,
                 "_sharpe_60d": sharpe_60d, "_atr_pct": atr_pct, "_downside_dev": downside_dev,
@@ -1683,7 +1711,7 @@ def _render_scanner():
 
     _loading_placeholder = st.empty()
     # ── session_state 캐시: 검색탭 리런 시 블로킹 완전 방지 ──
-    _ss_cache_key = f"scanner_df_v2_{_scanner_date}"
+    _ss_cache_key = f"scanner_df_v3_{_scanner_date}"
     _ss_time_key = f"scanner_time_{_scanner_date}"
     import time as _time_mod
     _cached_df_ss = st.session_state.get(_ss_cache_key)
