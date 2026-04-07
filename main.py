@@ -1,3 +1,14 @@
+import sys
+try:
+    import pkg_resources  # noqa
+except ImportError:
+    import types
+    _stub = types.ModuleType("pkg_resources")
+    _stub.get_distribution = lambda x: type("D", (), {"version": "0.0.0"})()
+    _stub.DistributionNotFound = Exception
+    _stub.VersionConflict = Exception
+    sys.modules["pkg_resources"] = _stub
+
 import streamlit as st
 import pandas as pd
 import numpy as np
