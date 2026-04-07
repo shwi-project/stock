@@ -402,7 +402,7 @@ _FALLBACK_UNIVERSE = [
 ]
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def _fetch_investor_data(code: str, start_str: str, end_str: str) -> dict:
+def _fetch_investor_data(code: str, start_str: str, end_str: str, _v: int = 2) -> dict:
     """종목별 외국인/기관 순매수 데이터 (pykrx 개별 조회)."""
     result = {"foreign_net": 0, "inst_net": 0, "_debug": ""}
     try:
@@ -617,7 +617,7 @@ def _calc_bollinger(close: pd.Series, period: int = 20, std_mult: float = 2.0) -
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def run_scanner(date_str: str) -> pd.DataFrame:
+def run_scanner(date_str: str, _v: int = 2) -> pd.DataFrame:
     """멀티팩터 퀀트 스캐너: 4-Pillar 모델로 종목 스코어링."""
     scanner_universe, bulk_data = _pre_screen_market(date_str)
     start_str = (datetime.strptime(date_str, "%Y%m%d") - timedelta(days=250)).strftime("%Y-%m-%d")
@@ -1683,7 +1683,7 @@ def _render_scanner():
 
     _loading_placeholder = st.empty()
     # ── session_state 캐시: 검색탭 리런 시 블로킹 완전 방지 ──
-    _ss_cache_key = f"scanner_df_{_scanner_date}"
+    _ss_cache_key = f"scanner_df_v2_{_scanner_date}"
     _ss_time_key = f"scanner_time_{_scanner_date}"
     import time as _time_mod
     _cached_df_ss = st.session_state.get(_ss_cache_key)
