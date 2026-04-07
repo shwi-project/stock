@@ -392,20 +392,44 @@ def load_all_stocks() -> pd.DataFrame:
 
 
 # ─────────────────────────────────────────────
-# 모닝 스캐너 유니버스 (주요 종목 ~80개)
+# 모닝 스캐너 유니버스 (시가총액 상위 동적 로드)
 # ─────────────────────────────────────────────
-SCANNER_UNIVERSE = [
-    "005930","000660","373220","207940","005380","068270","105560","000270",
-    "055550","005490","035420","051910","006400","012330","035720","086790",
-    "096770","066570","012450","064350","009540","042660","352820","041510",
-    "086520","247540","028300","196170","058470","259960","323410","257720",
-    "003670","034730","010130","032830","003490","009830","018260","011200",
-    "024110","036570","010950","033780","047050","015760","017670","003550",
-    "034020","090430","000100","078930","326030","316140","377300","112040",
-    "272210","003230","006800","138930","180640","011170","097950","021240",
-    "028260","251270","293490","000720","036460","005940","402340","005830",
-    "004020","011780","066970","300720","161390","145020","263750","052690",
-]
+@st.cache_data(ttl=3600, show_spinner=False)
+def _get_scanner_universe(top_n: int = 200) -> list:
+    """시가총액 상위 top_n 종목 코드를 동적으로 가져온다."""
+    try:
+        from pykrx import stock as krx_stock
+        today = now_kst().strftime("%Y%m%d")
+        codes = []
+        for mkt in ["KOSPI", "KOSDAQ"]:
+            cap_df = krx_stock.get_market_cap_by_ticker(date=today, market=mkt)
+            if cap_df is not None and len(cap_df) > 0:
+                cap_df = cap_df.sort_values("시가총액", ascending=False)
+                codes += cap_df.index.tolist()
+        if len(codes) > top_n:
+            return [c.zfill(6) for c in codes[:top_n]]
+        if codes:
+            return [c.zfill(6) for c in codes]
+    except Exception:
+        pass
+    try:
+        import FinanceDataReader as fdr
+        kospi = fdr.StockListing('KOSPI')
+        kosdaq = fdr.StockListing('KOSDAQ')
+        df_all = pd.concat([kospi, kosdaq], ignore_index=True)
+        if "Marcap" in df_all.columns:
+            df_all = df_all.sort_values("Marcap", ascending=False)
+        codes = df_all["Code"].astype(str).str.zfill(6).tolist()
+        return codes[:top_n] if len(codes) > top_n else codes
+    except Exception:
+        pass
+    # 최후 폴백: 기존 하드코딩 대형주
+    return [
+        "005930","000660","373220","207940","005380","068270","105560","000270",
+        "055550","005490","035420","051910","006400","012330","035720","086790",
+        "096770","066570","012450","064350","009540","042660","352820","041510",
+        "086520","247540","028300","196170","058470","259960","323410","257720",
+    ]
 
 
 # ─────────────────────────────────────────────
@@ -512,6 +536,7 @@ def _calc_bollinger(close: pd.Series, period: int = 20, std_mult: float = 2.0) -
 @st.cache_data(ttl=600, show_spinner=False)
 def run_scanner(date_str: str) -> pd.DataFrame:
     """멀티팩터 퀀트 스캐너: 4-Pillar 모델로 종목 스코어링."""
+    scanner_universe = _get_scanner_universe()
     start_str = (datetime.strptime(date_str, "%Y%m%d") - timedelta(days=250)).strftime("%Y-%m-%d")
 
     # ── KOSPI 벤치마크 데이터 ──
@@ -531,7 +556,7 @@ def run_scanner(date_str: str) -> pd.DataFrame:
     def _fetch_one(code):
         return code, _fetch_ohlcv(code, start_str, date_str)
     with ThreadPoolExecutor(max_workers=10) as executor:
-        futures = {executor.submit(_fetch_one, c): c for c in SCANNER_UNIVERSE}
+        futures = {executor.submit(_fetch_one, c): c for c in scanner_universe}
         for fut in as_completed(futures):
             try:
                 code, ohlcv = fut.result()
@@ -544,7 +569,7 @@ def run_scanner(date_str: str) -> pd.DataFrame:
 
     # ── Pass 1: 모든 종목 raw factor 수집 ──
     raw_results = []
-    for code in SCANNER_UNIVERSE:
+    for code in scanner_universe:
         try:
             if code not in _ohlcv_map:
                 continue
@@ -744,7 +769,7 @@ def run_scanner(date_str: str) -> pd.DataFrame:
             continue
 
     if _fail_count > 0:
-        st.toast(f"⚠️ {_fail_count}/{len(SCANNER_UNIVERSE)}개 종목 데이터 로드 실패", icon="⚠️")
+        st.toast(f"⚠️ {_fail_count}/{len(scanner_universe)}개 종목 데이터 로드 실패", icon="⚠️")
 
     if not raw_results:
         return pd.DataFrame()
