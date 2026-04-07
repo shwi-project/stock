@@ -10,6 +10,7 @@ import json
 import html as html_mod
 import base64
 from datetime import datetime, timedelta
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ─────────────────────────────────────────────
 # 페이지 설정
@@ -524,15 +525,30 @@ def run_scanner(date_str: str) -> pd.DataFrame:
     except Exception:
         pass
 
+    # ── Pass 0: OHLCV 병렬 다운로드 ──
+    _ohlcv_map = {}
+    _fail_count = 0
+    def _fetch_one(code):
+        return code, _fetch_ohlcv(code, start_str, date_str)
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = {executor.submit(_fetch_one, c): c for c in SCANNER_UNIVERSE}
+        for fut in as_completed(futures):
+            try:
+                code, ohlcv = fut.result()
+                if ohlcv is not None and len(ohlcv) >= 60:
+                    _ohlcv_map[code] = ohlcv
+                else:
+                    _fail_count += 1
+            except Exception:
+                _fail_count += 1
+
     # ── Pass 1: 모든 종목 raw factor 수집 ──
     raw_results = []
-    _fail_count = 0
     for code in SCANNER_UNIVERSE:
         try:
-            ohlcv = _fetch_ohlcv(code, start_str, date_str)
-            if ohlcv is None or len(ohlcv) < 60:
-                _fail_count += 1
+            if code not in _ohlcv_map:
                 continue
+            ohlcv = _ohlcv_map[code]
             close = ohlcv["Close"]
             high = ohlcv["High"]
             low = ohlcv["Low"]
@@ -725,7 +741,6 @@ def run_scanner(date_str: str) -> pd.DataFrame:
                 "_vol_confirm": vol_confirm, "_squeeze_score": squeeze_score,
             })
         except Exception:
-            _fail_count += 1
             continue
 
     if _fail_count > 0:
