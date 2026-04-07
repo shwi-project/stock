@@ -401,6 +401,24 @@ _FALLBACK_UNIVERSE = [
     "086520","247540","028300","196170","058470","259960","323410","257720",
 ]
 
+def _safe_lookup(df, code, col_candidates):
+    """DataFrame에서 code 행, 여러 컬럼명 후보 중 매칭되는 값 반환."""
+    if df is None or len(df) == 0:
+        return 0.0
+    # index 타입 통일 (문자열)
+    idx = str(code)
+    if idx not in df.index:
+        idx = idx.zfill(6)
+    if idx not in df.index:
+        return 0.0
+    for col in col_candidates:
+        if col in df.columns:
+            try:
+                return float(df.loc[idx, col])
+            except (ValueError, TypeError):
+                return 0.0
+    return 0.0
+
 @st.cache_data(ttl=600, show_spinner=False)
 def _pre_screen_market(date_str: str, top_n: int = 150) -> tuple:
     """전종목 벌크 스크리닝: 거래량 급증 + 외국인/기관 순매수 + 시총 필터.
@@ -413,41 +431,60 @@ def _pre_screen_market(date_str: str, top_n: int = 150) -> tuple:
         from pykrx import stock as krx_stock
         start_5d = (datetime.strptime(date_str, "%Y%m%d") - timedelta(days=10)).strftime("%Y%m%d")
 
-        # ── 1. 전종목 OHLCV (당일, ALL=코스피+코스닥) ──
+        # ── 1. 전종목 OHLCV (당일) ──
         ohlcv_df = krx_stock.get_market_ohlcv_by_ticker(date_str, market="ALL")
-
-        # ── 2. 전종목 시가총액 ──
-        cap_df = krx_stock.get_market_cap_by_ticker(date_str, market="ALL")
-
-        # ── 3. 외국인 순매수 (최근 5영업일) ──
-        foreign_df = pd.DataFrame()
-        try:
-            foreign_df = krx_stock.get_market_net_purchases_of_equities_by_ticker(
-                start_5d, date_str, market="ALL", investor="외국인"
-            )
-        except Exception:
-            pass
-
-        # ── 4. 기관 순매수 (최근 5영업일) ──
-        inst_df = pd.DataFrame()
-        try:
-            inst_df = krx_stock.get_market_net_purchases_of_equities_by_ticker(
-                start_5d, date_str, market="ALL", investor="기관합계"
-            )
-        except Exception:
-            pass
-
-        # ── 5. 펀더멘탈 (PER, PBR) ──
-        fund_df = pd.DataFrame()
-        try:
-            fund_df = krx_stock.get_market_fundamental_by_ticker(date_str, market="ALL")
-        except Exception:
-            pass
-
         if ohlcv_df is None or len(ohlcv_df) == 0:
             return _FALLBACK_UNIVERSE, {}
+        ohlcv_df.index = ohlcv_df.index.astype(str)
+
+        # ── 2. 전종목 시가총액 ──
+        cap_df = None
+        try:
+            cap_df = krx_stock.get_market_cap_by_ticker(date_str, market="ALL")
+            if cap_df is not None:
+                cap_df.index = cap_df.index.astype(str)
+        except Exception:
+            pass
+
+        # ── 3. 외국인 순매수 (KOSPI/KOSDAQ 분리 후 합치기) ──
+        foreign_frames = []
+        for mkt in ["KOSPI", "KOSDAQ"]:
+            try:
+                df = krx_stock.get_market_net_purchases_of_equities_by_ticker(
+                    start_5d, date_str, market=mkt, investor="외국인"
+                )
+                if df is not None and len(df) > 0:
+                    df.index = df.index.astype(str)
+                    foreign_frames.append(df)
+            except Exception:
+                pass
+        foreign_df = pd.concat(foreign_frames) if foreign_frames else None
+
+        # ── 4. 기관 순매수 ──
+        inst_frames = []
+        for mkt in ["KOSPI", "KOSDAQ"]:
+            try:
+                df = krx_stock.get_market_net_purchases_of_equities_by_ticker(
+                    start_5d, date_str, market=mkt, investor="기관합계"
+                )
+                if df is not None and len(df) > 0:
+                    df.index = df.index.astype(str)
+                    inst_frames.append(df)
+            except Exception:
+                pass
+        inst_df = pd.concat(inst_frames) if inst_frames else None
+
+        # ── 5. 펀더멘탈 (PER, PBR) ──
+        fund_df = None
+        try:
+            fund_df = krx_stock.get_market_fundamental_by_ticker(date_str, market="ALL")
+            if fund_df is not None:
+                fund_df.index = fund_df.index.astype(str)
+        except Exception:
+            pass
 
         # ── 종합 스코어링 ──
+        _net_col = ["순매수거래대금", "순매수"]
         for code in ohlcv_df.index:
             try:
                 row = ohlcv_df.loc[code]
@@ -458,40 +495,20 @@ def _pre_screen_market(date_str: str, top_n: int = 150) -> tuple:
                 if close < 1000 or volume < 1000:
                     continue
 
-                # 시가총액 필터 (최소 1000억)
-                marcap = 0
-                if cap_df is not None and code in cap_df.index:
-                    marcap = float(cap_df.loc[code, "시가총액"])
+                marcap = _safe_lookup(cap_df, code, ["시가총액"])
                 if marcap < 100_000_000_000:
                     continue
 
                 vol_score = min(volume / 1_000_000, 5.0)
 
-                # 외국인 순매수 (순매수거래대금 컬럼)
-                foreign_net = 0
-                if foreign_df is not None and len(foreign_df) > 0 and code in foreign_df.index:
-                    for col in ["순매수거래대금", "순매수"]:
-                        if col in foreign_df.columns:
-                            foreign_net = float(foreign_df.loc[code, col])
-                            break
+                foreign_net = _safe_lookup(foreign_df, code, _net_col)
                 foreign_score = np.clip(foreign_net / 10_000_000_000, -2, 3)
 
-                # 기관 순매수
-                inst_net = 0
-                if inst_df is not None and len(inst_df) > 0 and code in inst_df.index:
-                    for col in ["순매수거래대금", "순매수"]:
-                        if col in inst_df.columns:
-                            inst_net = float(inst_df.loc[code, col])
-                            break
+                inst_net = _safe_lookup(inst_df, code, _net_col)
                 inst_score = np.clip(inst_net / 10_000_000_000, -2, 3)
 
-                # PER/PBR
-                per_val, pbr_val = 0.0, 0.0
-                if fund_df is not None and len(fund_df) > 0 and code in fund_df.index:
-                    if "PER" in fund_df.columns:
-                        per_val = float(fund_df.loc[code, "PER"])
-                    if "PBR" in fund_df.columns:
-                        pbr_val = float(fund_df.loc[code, "PBR"])
+                per_val = _safe_lookup(fund_df, code, ["PER"])
+                pbr_val = _safe_lookup(fund_df, code, ["PBR"])
                 value_score = 0
                 if 0 < per_val < 15:
                     value_score += 1.0
