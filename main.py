@@ -412,6 +412,7 @@ SCANNER_UNIVERSE = [
 # Momentum(35) + MeanReversion(20) + TrendQuality(25) + RiskAdjusted(20) = 100
 # ─────────────────────────────────────────────
 
+@st.cache_data(ttl=3600, show_spinner=False)
 def _fetch_ohlcv(code: str, start_str: str, date_str: str):
     """FDR 우선, pykrx 폴백으로 OHLCV 가져오기."""
     try:
@@ -525,10 +526,12 @@ def run_scanner(date_str: str) -> pd.DataFrame:
 
     # ── Pass 1: 모든 종목 raw factor 수집 ──
     raw_results = []
+    _fail_count = 0
     for code in SCANNER_UNIVERSE:
         try:
             ohlcv = _fetch_ohlcv(code, start_str, date_str)
             if ohlcv is None or len(ohlcv) < 60:
+                _fail_count += 1
                 continue
             close = ohlcv["Close"]
             high = ohlcv["High"]
@@ -579,13 +582,16 @@ def run_scanner(date_str: str) -> pd.DataFrame:
             else:
                 obv_confirm = 0.4
 
+            # ─── RSI 1회 계산 후 재사용 ───
+            rsi_series = _calc_rsi(close)
+
             # 1f. RSI Divergence Detection (20-bar lookback)
             _divergence_score = 0.0
             _divergence_tag = None
             if n >= 20:
                 _lookback = 20
                 _price_window = close.iloc[-_lookback:]
-                _rsi_window = _calc_rsi(close).iloc[-_lookback:]
+                _rsi_window = rsi_series.iloc[-_lookback:]
                 # Find local lows/highs in price (simple: compare to neighbors)
                 _p_vals = _price_window.values
                 _r_vals = _rsi_window.values
@@ -605,7 +611,6 @@ def run_scanner(date_str: str) -> pd.DataFrame:
                         _divergence_tag = "약세다이버전스"
 
             # ─── PILLAR 2: MEAN REVERSION ───
-            rsi_series = _calc_rsi(close)
             cur_rsi = float(rsi_series.iloc[-1])
             # RSI 존 점수 (30-40 최적 반등 구간)
             if 30 <= cur_rsi <= 40:
@@ -687,10 +692,6 @@ def run_scanner(date_str: str) -> pd.DataFrame:
             prev_close = float(close.iloc[-2]) if n >= 2 else cp
             change_pct = round((cp - prev_close) / max(prev_close, 1) * 100, 2)
 
-            # ─── Price-RSI Divergence (half-split method) ───
-            _div_df = pd.DataFrame({"Close": close.values, "RSI": rsi_series.values})
-            _half_split_div = _detect_divergence(_div_df, lookback=20)
-
             # ─── 시그널 태그 생성 ───
             signals = []
             macd_cur = float(macd_hist.iloc[-1])
@@ -704,9 +705,8 @@ def run_scanner(date_str: str) -> pd.DataFrame:
             if macd_cur > 0 and macd_slope > 0: signals.append("MACD▲")
             if stoch_score >= 0.8: signals.append("스토캐스틱↑")
             if obv_confirm >= 0.7: signals.append("OBV확인")
-            if _divergence_tag: signals.append(_divergence_tag)
-            if _half_split_div == "bearish_div": signals.append("⚠RSI괴리")
-            if _half_split_div == "bullish_div": signals.append("💡RSI반전")
+            if _divergence_tag == "강세다이버전스": signals.append("💡RSI반전")
+            if _divergence_tag == "약세다이버전스": signals.append("⚠RSI괴리")
 
             raw_results.append({
                 "code": code, "price": int(cp), "change_pct": change_pct,
@@ -725,7 +725,11 @@ def run_scanner(date_str: str) -> pd.DataFrame:
                 "_vol_confirm": vol_confirm, "_squeeze_score": squeeze_score,
             })
         except Exception:
+            _fail_count += 1
             continue
+
+    if _fail_count > 0:
+        st.toast(f"⚠️ {_fail_count}/{len(SCANNER_UNIVERSE)}개 종목 데이터 로드 실패", icon="⚠️")
 
     if not raw_results:
         return pd.DataFrame()
