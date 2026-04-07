@@ -392,49 +392,161 @@ def load_all_stocks() -> pd.DataFrame:
 
 
 # ─────────────────────────────────────────────
-# 모닝 스캐너 유니버스 (시가총액 상위 동적 로드)
+# 전종목 벌크 스크리닝 (pykrx 벌크 API)
 # ─────────────────────────────────────────────
-@st.cache_data(ttl=3600, show_spinner=False)
-def _get_scanner_universe(top_n: int = 200) -> list:
-    """시가총액 상위 top_n 종목 코드를 동적으로 가져온다."""
+_FALLBACK_UNIVERSE = [
+    "005930","000660","373220","207940","005380","068270","105560","000270",
+    "055550","005490","035420","051910","006400","012330","035720","086790",
+    "096770","066570","012450","064350","009540","042660","352820","041510",
+    "086520","247540","028300","196170","058470","259960","323410","257720",
+]
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _pre_screen_market(date_str: str, top_n: int = 150) -> tuple:
+    """전종목 벌크 스크리닝: 거래량 급증 + 외국인/기관 순매수 + 시총 필터.
+    Returns (candidate_codes: list, bulk_data: dict[code -> dict])
+    """
+    from pykrx import stock as krx_stock
+
+    bulk_data = {}
+    all_scores = {}
+
     try:
-        from pykrx import stock as krx_stock
-        today = now_kst().strftime("%Y%m%d")
-        codes = []
+        # ── 1. 전종목 OHLCV (당일) ──
+        ohlcv_today = {}
         for mkt in ["KOSPI", "KOSDAQ"]:
-            cap_df = krx_stock.get_market_cap_by_ticker(date=today, market=mkt)
-            if cap_df is not None and len(cap_df) > 0:
-                cap_df = cap_df.sort_values("시가총액", ascending=False)
-                codes += cap_df.index.tolist()
-        if len(codes) > top_n:
-            return [c.zfill(6) for c in codes[:top_n]]
-        if codes:
-            return [c.zfill(6) for c in codes]
+            df = krx_stock.get_market_ohlcv_by_ticker(date_str, market=mkt)
+            if df is not None and len(df) > 0:
+                ohlcv_today[mkt] = df
+
+        # ── 2. 전종목 시가총액 ──
+        cap_all = {}
+        for mkt in ["KOSPI", "KOSDAQ"]:
+            df = krx_stock.get_market_cap_by_ticker(date_str, market=mkt)
+            if df is not None and len(df) > 0:
+                cap_all[mkt] = df
+
+        # ── 3. 외국인 순매수 (최근 5영업일) ──
+        start_5d = (datetime.strptime(date_str, "%Y%m%d") - timedelta(days=10)).strftime("%Y%m%d")
+        foreign_all = {}
+        for mkt in ["KOSPI", "KOSDAQ"]:
+            try:
+                df = krx_stock.get_market_net_purchases_of_equities_by_ticker(
+                    start_5d, date_str, market=mkt, investor="외국인"
+                )
+                if df is not None and len(df) > 0:
+                    foreign_all[mkt] = df
+            except Exception:
+                pass
+
+        # ── 4. 기관 순매수 (최근 5영업일) ──
+        inst_all = {}
+        for mkt in ["KOSPI", "KOSDAQ"]:
+            try:
+                df = krx_stock.get_market_net_purchases_of_equities_by_ticker(
+                    start_5d, date_str, market=mkt, investor="기관합계"
+                )
+                if df is not None and len(df) > 0:
+                    inst_all[mkt] = df
+            except Exception:
+                pass
+
+        # ── 5. 펀더멘탈 (PER, PBR) ──
+        fund_all = {}
+        for mkt in ["KOSPI", "KOSDAQ"]:
+            try:
+                df = krx_stock.get_market_fundamental_by_ticker(date_str, market=mkt)
+                if df is not None and len(df) > 0:
+                    fund_all[mkt] = df
+            except Exception:
+                pass
+
+        # ── 종합 스코어링 ──
+        for mkt in ["KOSPI", "KOSDAQ"]:
+            if mkt not in ohlcv_today:
+                continue
+            ohlcv_df = ohlcv_today[mkt]
+            cap_df = cap_all.get(mkt, pd.DataFrame())
+            foreign_df = foreign_all.get(mkt, pd.DataFrame())
+            inst_df = inst_all.get(mkt, pd.DataFrame())
+            fund_df = fund_all.get(mkt, pd.DataFrame())
+
+            for code in ohlcv_df.index:
+                try:
+                    row = ohlcv_df.loc[code]
+                    close = float(row["종가"]) if "종가" in row.index else 0
+                    volume = float(row["거래량"]) if "거래량" in row.index else 0
+                    change_pct = float(row["등락률"]) if "등락률" in row.index else 0
+
+                    # 최소 필터: 가격 1000원 이상, 거래량 존재
+                    if close < 1000 or volume < 1000:
+                        continue
+
+                    # 시가총액 필터 (최소 1000억)
+                    marcap = 0
+                    if code in cap_df.index:
+                        marcap = float(cap_df.loc[code, "시가총액"])
+                    if marcap < 100_000_000_000:
+                        continue
+
+                    # 거래량 점수 (등락률 기반 추정 — 급등 시 거래량도 급증)
+                    vol_score = min(volume / 1_000_000, 5.0)  # 백만주 단위 정규화
+
+                    # 외국인 순매수 점수
+                    foreign_net = 0
+                    if code in foreign_df.index:
+                        foreign_net = float(foreign_df.loc[code, "순매수"] if "순매수" in foreign_df.columns else 0)
+                    foreign_score = np.clip(foreign_net / 10_000_000_000, -2, 3)  # 100억 단위 정규화
+
+                    # 기관 순매수 점수
+                    inst_net = 0
+                    if code in inst_df.index:
+                        inst_net = float(inst_df.loc[code, "순매수"] if "순매수" in inst_df.columns else 0)
+                    inst_score = np.clip(inst_net / 10_000_000_000, -2, 3)
+
+                    # PER/PBR (저평가 보너스)
+                    per_val, pbr_val = 0, 0
+                    if code in fund_df.index:
+                        per_val = float(fund_df.loc[code, "PER"]) if "PER" in fund_df.columns else 0
+                        pbr_val = float(fund_df.loc[code, "PBR"]) if "PBR" in fund_df.columns else 0
+                    value_score = 0
+                    if 0 < per_val < 15:
+                        value_score += 1.0
+                    if 0 < pbr_val < 1.5:
+                        value_score += 1.0
+
+                    # 종합 프리스크린 점수
+                    pre_score = vol_score + foreign_score * 2 + inst_score * 1.5 + value_score
+
+                    code_str = str(code).zfill(6)
+                    all_scores[code_str] = pre_score
+                    bulk_data[code_str] = {
+                        "market": mkt,
+                        "marcap": marcap,
+                        "foreign_net": foreign_net,
+                        "inst_net": inst_net,
+                        "per": per_val,
+                        "pbr": pbr_val,
+                        "change_pct": change_pct,
+                    }
+                except Exception:
+                    continue
+
     except Exception:
-        pass
-    try:
-        import FinanceDataReader as fdr
-        kospi = fdr.StockListing('KOSPI')
-        kosdaq = fdr.StockListing('KOSDAQ')
-        df_all = pd.concat([kospi, kosdaq], ignore_index=True)
-        if "Marcap" in df_all.columns:
-            df_all = df_all.sort_values("Marcap", ascending=False)
-        codes = df_all["Code"].astype(str).str.zfill(6).tolist()
-        return codes[:top_n] if len(codes) > top_n else codes
-    except Exception:
-        pass
-    # 최후 폴백: 기존 하드코딩 대형주
-    return [
-        "005930","000660","373220","207940","005380","068270","105560","000270",
-        "055550","005490","035420","051910","006400","012330","035720","086790",
-        "096770","066570","012450","064350","009540","042660","352820","041510",
-        "086520","247540","028300","196170","058470","259960","323410","257720",
-    ]
+        # pykrx 전체 실패 시 폴백
+        return _FALLBACK_UNIVERSE, {}
+
+    if not all_scores:
+        return _FALLBACK_UNIVERSE, {}
+
+    # 점수 상위 top_n 추출
+    sorted_codes = sorted(all_scores, key=all_scores.get, reverse=True)[:top_n]
+    return sorted_codes, bulk_data
 
 
 # ─────────────────────────────────────────────
 # 멀티팩터 퀀트 스캐너 (학술 기반 4-Pillar 모델)
-# Momentum(35) + MeanReversion(20) + TrendQuality(25) + RiskAdjusted(20) = 100
+# Momentum(25) + MeanReversion(15) + TrendQuality(20) + RiskAdjusted(15) + Supply(25) = 100
 # ─────────────────────────────────────────────
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -536,7 +648,7 @@ def _calc_bollinger(close: pd.Series, period: int = 20, std_mult: float = 2.0) -
 @st.cache_data(ttl=600, show_spinner=False)
 def run_scanner(date_str: str) -> pd.DataFrame:
     """멀티팩터 퀀트 스캐너: 4-Pillar 모델로 종목 스코어링."""
-    scanner_universe = _get_scanner_universe()
+    scanner_universe, bulk_data = _pre_screen_market(date_str)
     start_str = (datetime.strptime(date_str, "%Y%m%d") - timedelta(days=250)).strftime("%Y-%m-%d")
 
     # ── KOSPI 벤치마크 데이터 ──
@@ -733,6 +845,27 @@ def run_scanner(date_str: str) -> pd.DataFrame:
             prev_close = float(close.iloc[-2]) if n >= 2 else cp
             change_pct = round((cp - prev_close) / max(prev_close, 1) * 100, 2)
 
+            # ─── 외국인/기관 순매수 (벌크 데이터) ───
+            _bulk = bulk_data.get(code, {})
+            foreign_net = _bulk.get("foreign_net", 0)
+            inst_net = _bulk.get("inst_net", 0)
+            per_val = _bulk.get("per", 0)
+            pbr_val = _bulk.get("pbr", 0)
+
+            # 외국인/기관 점수 (스코어링용)
+            _foreign_score = np.clip(foreign_net / 10_000_000_000, -1, 1)  # ±1 범위
+            _inst_score = np.clip(inst_net / 10_000_000_000, -1, 1)
+
+            # ─── 매집 신호 (Accumulation) ───
+            # 가격 횡보(±3%) + OBV 상승 = 세력 매집
+            _accumulation = 0.0
+            if n >= 20:
+                _price_range_20 = (float(close.iloc[-1]) / float(close.iloc[-20]) - 1)
+                if abs(_price_range_20) < 0.03 and obv_slope_20 > 0:
+                    _accumulation = 1.0  # 강한 매집
+                elif abs(_price_range_20) < 0.05 and obv_slope_20 > 0:
+                    _accumulation = 0.6  # 약한 매집
+
             # ─── 시그널 태그 생성 ───
             signals = []
             macd_cur = float(macd_hist.iloc[-1])
@@ -748,6 +881,14 @@ def run_scanner(date_str: str) -> pd.DataFrame:
             if obv_confirm >= 0.7: signals.append("OBV확인")
             if _divergence_tag == "강세다이버전스": signals.append("💡RSI반전")
             if _divergence_tag == "약세다이버전스": signals.append("⚠RSI괴리")
+            # 외국인/기관/매집 시그널
+            if foreign_net > 1_000_000_000: signals.append(f"🏦외인+{foreign_net/100_000_000:.0f}억")
+            elif foreign_net < -1_000_000_000: signals.append(f"🏦외인{foreign_net/100_000_000:.0f}억")
+            if inst_net > 1_000_000_000: signals.append(f"🏛기관+{inst_net/100_000_000:.0f}억")
+            elif inst_net < -1_000_000_000: signals.append(f"🏛기관{inst_net/100_000_000:.0f}억")
+            if _accumulation >= 0.6: signals.append("🔒매집감지")
+            if 0 < per_val < 10: signals.append(f"PER{per_val:.1f}")
+            if 0 < pbr_val < 1.0: signals.append(f"PBR{pbr_val:.2f}")
 
             raw_results.append({
                 "code": code, "price": int(cp), "change_pct": change_pct,
@@ -755,6 +896,7 @@ def run_scanner(date_str: str) -> pd.DataFrame:
                 "adx": round(adx_data["adx"], 1), "sharpe": round(sharpe_60d, 2),
                 "macd_hist": round(macd_cur, 2),
                 "signals": signals,
+                "foreign_net": foreign_net, "inst_net": inst_net,
                 # Raw scores (Pillar 1 - 상대적 비교 필요한 것들)
                 "_rel_strength": rel_strength, "_roc_20": roc_20,
                 "_sharpe_60d": sharpe_60d, "_atr_pct": atr_pct, "_downside_dev": downside_dev,
@@ -764,6 +906,8 @@ def run_scanner(date_str: str) -> pd.DataFrame:
                 "_rsi_zone": rsi_zone, "_bb_score": bb_score, "_stoch_score": stoch_score,
                 "_adx_score": adx_score, "_ichi_score": ichi_score,
                 "_vol_confirm": vol_confirm, "_squeeze_score": squeeze_score,
+                "_foreign_score": _foreign_score, "_inst_score": _inst_score,
+                "_accumulation": _accumulation,
             })
         except Exception:
             continue
@@ -786,45 +930,56 @@ def run_scanner(date_str: str) -> pd.DataFrame:
     for col in ["_atr_pct", "_downside_dev"]:
         df_raw[col + "_rank"] = 1 - df_raw[col].rank(pct=True)
 
+    # 외국인/기관 점수도 percentile rank
+    for col in ["_foreign_score", "_inst_score"]:
+        df_raw[col + "_rank"] = df_raw[col].rank(pct=True)
+
     # ── Pass 3: 최종 점수 계산 (100점 만점) ──
+    # Momentum(25) + MeanReversion(15) + TrendQuality(20) + RiskAdjusted(15) + Supply(25) = 100
     scores = []
     for idx, row in df_raw.iterrows():
-        # PILLAR 1: MOMENTUM (35점)
-        p1_rel = row["_rel_strength_rank"] * 10                        # 상대강도 10점
-        p1_macd = min(max(row["_macd_slope"] / 50 + 0.5, 0), 1) * 8  # MACD 기울기 8점
-        p1_ma = row["_ma_cascade"] * 7                                 # MA 캐스케이드 7점
-        p1_roc = row["_roc_20_rank"] * 5                               # ROC-20 5점
-        p1_obv = row["_obv_confirm"] * 5                               # OBV 확인 5점
-        # RSI divergence bonus (±3 pts, clamped within 0~35)
+        # PILLAR 1: MOMENTUM (25점)
+        p1_rel = row["_rel_strength_rank"] * 7                         # 상대강도 7점
+        p1_macd = min(max(row["_macd_slope"] / 50 + 0.5, 0), 1) * 6  # MACD 기울기 6점
+        p1_ma = row["_ma_cascade"] * 5                                 # MA 캐스케이드 5점
+        p1_roc = row["_roc_20_rank"] * 4                               # ROC-20 4점
+        p1_obv = row["_obv_confirm"] * 3                               # OBV 확인 3점
         p1_div = row["_divergence_score"]                              # 다이버전스 ±3점
-        momentum = np.clip(p1_rel + p1_macd + p1_ma + p1_roc + p1_obv + p1_div, 0, 35)
+        momentum = np.clip(p1_rel + p1_macd + p1_ma + p1_roc + p1_obv + p1_div, 0, 25)
 
-        # PILLAR 2: MEAN REVERSION (20점)
-        p2_rsi = row["_rsi_zone"] * 7                                  # RSI 존 7점
-        p2_bb = row["_bb_score"] * 7                                   # 볼린저 %B 7점
-        p2_stoch = row["_stoch_score"] * 6                             # 스토캐스틱 6점
+        # PILLAR 2: MEAN REVERSION (15점)
+        p2_rsi = row["_rsi_zone"] * 5                                  # RSI 존 5점
+        p2_bb = row["_bb_score"] * 5                                   # 볼린저 %B 5점
+        p2_stoch = row["_stoch_score"] * 5                             # 스토캐스틱 5점
         mean_rev = p2_rsi + p2_bb + p2_stoch
 
-        # PILLAR 3: TREND QUALITY (25점)
-        p3_adx = row["_adx_score"] * 8                                 # ADX 8점
-        p3_ichi = row["_ichi_score"] * 7                               # 이치모쿠 7점
+        # PILLAR 3: TREND QUALITY (20점)
+        p3_adx = row["_adx_score"] * 6                                 # ADX 6점
+        p3_ichi = row["_ichi_score"] * 5                               # 이치모쿠 5점
         p3_vol = row["_vol_confirm"] * 5                               # 거래량 확인 5점
-        p3_squeeze = row["_squeeze_score"] * 5                         # 볼린저 스퀴즈 5점
+        p3_squeeze = row["_squeeze_score"] * 4                         # 볼린저 스퀴즈 4점
         trend = p3_adx + p3_ichi + p3_vol + p3_squeeze
 
-        # PILLAR 4: RISK-ADJUSTED (20점)
-        p4_sharpe = row["_sharpe_60d_rank"] * 8                        # 샤프비율 8점
-        p4_atr = row["_atr_pct_rank"] * 6                             # ATR 변동성 6점
-        p4_dd = row["_downside_dev_rank"] * 6                          # 하방 편차 6점
+        # PILLAR 4: RISK-ADJUSTED (15점)
+        p4_sharpe = row["_sharpe_60d_rank"] * 6                        # 샤프비율 6점
+        p4_atr = row["_atr_pct_rank"] * 5                             # ATR 변동성 5점
+        p4_dd = row["_downside_dev_rank"] * 4                          # 하방 편차 4점
         risk_adj = p4_sharpe + p4_atr + p4_dd
 
-        total = momentum + mean_rev + trend + risk_adj
+        # PILLAR 5: SUPPLY (수급) (25점) ── 신규
+        p5_foreign = row["_foreign_score_rank"] * 10                   # 외국인 순매수 10점
+        p5_inst = row["_inst_score_rank"] * 8                          # 기관 순매수 8점
+        p5_accum = row["_accumulation"] * 7                            # 매집 신호 7점
+        supply = p5_foreign + p5_inst + p5_accum
+
+        total = momentum + mean_rev + trend + risk_adj + supply
         scores.append({
             "total": round(total, 1),
             "momentum": round(momentum, 1),
             "mean_rev": round(mean_rev, 1),
             "trend": round(trend, 1),
             "risk_adj": round(risk_adj, 1),
+            "supply": round(supply, 1),
         })
 
     df_scores = pd.DataFrame(scores)
@@ -833,6 +988,7 @@ def run_scanner(date_str: str) -> pd.DataFrame:
     df_raw["mean_rev"] = df_scores["mean_rev"]
     df_raw["trend"] = df_scores["trend"]
     df_raw["risk_adj"] = df_scores["risk_adj"]
+    df_raw["supply"] = df_scores["supply"]
 
     # 내부 계산용 컬럼 제거
     drop_cols = [c for c in df_raw.columns if c.startswith("_")]
@@ -1603,9 +1759,15 @@ def _render_scanner():
         _mr = _row.get("mean_rev", 0)
         _t = _row.get("trend", 0)
         _ra = _row.get("risk_adj", 0)
+        _su = _row.get("supply", 0)
         _code = _row["code"]
         _cached_ai = st.session_state[_scanner_ai_cache_key].get(_code)
         _score_cls = "score-high" if _score >= 60 else ("score-mid" if _score >= 40 else "score-low")
+        # 외국인/기관 순매수 표시용
+        _fn = _row.get("foreign_net", 0)
+        _in = _row.get("inst_net", 0)
+        _fn_str = f"+{_fn/100_000_000:.0f}억" if _fn > 0 else f"{_fn/100_000_000:.0f}억"
+        _in_str = f"+{_in/100_000_000:.0f}억" if _in > 0 else f"{_in/100_000_000:.0f}억"
 
         # ── 통합 카드: HTML 하나로 렌더 + AI 버튼만 별도 form ──
         _submitted = False
@@ -1623,19 +1785,23 @@ def _render_scanner():
                 <span style="font-family:'JetBrains Mono',monospace;font-size:1rem;font-weight:600;color:#e2e8f0">{_row["price"]:,}원</span>
                 <span style="font-size:0.8rem;color:{_chg_color};font-weight:600">{_chg_arrow} {abs(_row["change_pct"]):.2f}%</span>
             </div>
-            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:10px">
+            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:6px">
                 {_signals_html}
-                <span style="font-size:0.6rem;color:#4a5568;margin-left:auto">
-                    RSI {_row["rsi"]} · ADX {_row.get("adx",0)} · Sharpe {_row.get("sharpe",0)}
-                </span>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;font-size:0.65rem;color:#8892a4">
+                <span>RSI {_row["rsi"]}</span><span>ADX {_row.get("adx",0)}</span>
+                <span>Sharpe {_row.get("sharpe",0)}</span>
+                <span style="color:{"#fc5c5c" if _fn > 0 else "#4d9fff"}">외인 {_fn_str}</span>
+                <span style="color:{"#fc5c5c" if _in > 0 else "#4d9fff"}">기관 {_in_str}</span>
             </div>
             <div style="display:flex;gap:3px;height:24px;font-size:0.7rem;font-family:'Noto Sans KR',sans-serif;font-weight:600;line-height:24px;margin-bottom:4px">
                 <div style="flex:{_m};background:linear-gradient(135deg,#4d9fff,#3a7bd5);color:#fff;text-align:center;border-radius:4px 0 0 4px;overflow:hidden;white-space:nowrap">모멘텀 {_m:.0f}</div>
                 <div style="flex:{max(_mr, 0.5)};background:linear-gradient(135deg,#f5a623,#e8961f);color:#fff;text-align:center;overflow:hidden;white-space:nowrap">진입 {_mr:.0f}</div>
                 <div style="flex:{_t};background:linear-gradient(135deg,#38b2ac,#2d9f99);color:#fff;text-align:center;overflow:hidden;white-space:nowrap">추세 {_t:.0f}</div>
-                <div style="flex:{max(_ra, 0.5)};background:linear-gradient(135deg,#9f7aea,#805ad5);color:#fff;text-align:center;border-radius:0 4px 4px 0;overflow:hidden;white-space:nowrap">리스크 {_ra:.0f}</div>
+                <div style="flex:{max(_ra, 0.5)};background:linear-gradient(135deg,#9f7aea,#805ad5);color:#fff;text-align:center;overflow:hidden;white-space:nowrap">리스크 {_ra:.0f}</div>
+                <div style="flex:{max(_su, 0.5)};background:linear-gradient(135deg,#e53e3e,#c53030);color:#fff;text-align:center;border-radius:0 4px 4px 0;overflow:hidden;white-space:nowrap">수급 {_su:.0f}</div>
             </div>
-            <div style="font-size:0.55rem;color:#4a5568">모멘텀 /35 · 진입 /20 · 추세 /25 · 리스크 /20</div>
+            <div style="font-size:0.55rem;color:#4a5568">모멘텀 /25 · 진입 /15 · 추세 /20 · 리스크 /15 · 수급 /25</div>
         </div>
         '''
 
