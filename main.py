@@ -1714,7 +1714,6 @@ def _render_scanner():
         _score_cls = "score-high" if _score >= 60 else ("score-mid" if _score >= 40 else "score-low")
         # 외국인/기관 순매수 표시용
         _fr = _row.get("foreign_ratio", 0.0)
-        _fr_str = f"{_fr:.1f}%"
         _amt = _row.get("amount", 0)
         if _amt >= 1_000_000_000_000:
             _amt_str = f"{_amt/1_000_000_000_000:.1f}조"
@@ -1722,6 +1721,7 @@ def _render_scanner():
             _amt_str = f"{_amt/100_000_000:.0f}억"
         else:
             _amt_str = f"{_amt/100_000_000:.1f}억"
+        _fr_html = f'<span style="color:#4d9fff">외인보유 {_fr:.1f}%</span>' if _fr >= 1 else ""
 
         # ── 통합 카드: HTML 하나로 렌더 + AI 버튼만 별도 form ──
         _submitted = False
@@ -1747,7 +1747,7 @@ def _render_scanner():
                 <span>Sharpe {_row.get("sharpe",0)}</span>
                 <span>거래량 {_row.get("vol_ratio",0):.1f}x</span>
                 <span style="color:#f5a623">거래대금 {_amt_str}</span>
-                {"" if _fr < 1 else f'<span style="color:#4d9fff">외인보유 {_fr_str}</span>'}
+                {_fr_html}
             </div>
             <div style="display:flex;gap:3px;height:24px;font-size:0.7rem;font-family:'Noto Sans KR',sans-serif;font-weight:600;line-height:24px;margin-bottom:4px">
                 <div style="flex:{_m};background:linear-gradient(135deg,#4d9fff,#3a7bd5);color:#fff;text-align:center;border-radius:4px 0 0 4px;overflow:hidden;white-space:nowrap">모멘텀 {_m:.0f}</div>
