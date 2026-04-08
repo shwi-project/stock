@@ -863,8 +863,7 @@ def run_scanner(date_str: str, _v: int = 5) -> pd.DataFrame:
         except Exception:
             continue
 
-    if _fail_count > 0:
-        st.toast(f"⚠️ {_fail_count}/{len(scanner_universe)}개 종목 데이터 로드 실패", icon="⚠️")
+    # st.toast는 @st.cache_data 안에서 사용 불가 — 호출부에서 처리
 
     if not raw_results:
         return pd.DataFrame()
