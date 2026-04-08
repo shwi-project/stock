@@ -1000,10 +1000,8 @@ def fetch_scanner_briefing(stock_code: str, stock_info: dict, today_str: str) ->
                 import re as _re
                 parts = rj["candidates"][0]["content"].get("parts", [])
                 text = "".join(p.get("text", "") for p in parts if "text" in p).strip()
-                text = _re.sub(r'```.*?```', '', text, flags=_re.DOTALL)
-                text = _re.sub(r'print\s*\(.*?\)\s*', '', text, flags=_re.DOTALL)
+                text = _re.sub(r'```[\s\S]*?```', '', text)
                 text = _re.sub(r'google_search\.\w+\(.*?\)', '', text, flags=_re.DOTALL)
-                text = _re.sub(r'(?i)disclaimer.*', '', text, flags=_re.DOTALL)
                 text = _re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', text)
                 text = text.strip()
                 if text:
