@@ -8,4 +8,4 @@ streamlit-lightweight-charts>=0.7.0
 requests>=2.31.0
 pykrx>=1.0.45
 finance-datareader
-setuptools
+
