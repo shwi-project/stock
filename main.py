@@ -1747,7 +1747,6 @@ def _render_scanner():
                 <div style="flex:{max(_su, 0.5)};background:linear-gradient(135deg,#e53e3e,#c53030);color:#fff;text-align:center;border-radius:0 4px 4px 0;overflow:hidden;white-space:nowrap">수급 {_su:.0f}</div>
             </div>
             <div style="font-size:0.55rem;color:#4a5568">모멘텀 /25 · 진입 /15 · 추세 /20 · 리스크 /15 · 수급 /25</div>
-            <div style="font-size:0.5rem;color:#f59e0b;margin-top:4px">🔧 {_inv_debug_info}</div>
         </div>
         '''
 
