@@ -1720,7 +1720,8 @@ def _render_scanner():
             _amt_str = f"{_amt/100_000_000:.0f}억"
         else:
             _amt_str = f"{_amt/100_000_000:.1f}억"
-        _fr_html = f'<span style="color:#4d9fff">외인보유 {_fr:.1f}%</span>' if _fr >= 1 else ""
+        _fr_str = f"외인보유 {_fr:.1f}%" if _fr >= 1 else ""
+        _vr_str = f"{_row.get('vol_ratio',0):.1f}"
 
         # ── 카드 HTML (원본 구조 유지) ──
         _submitted = False
@@ -1746,6 +1747,9 @@ def _render_scanner():
             <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;font-size:0.65rem;color:#8892a4">
                 <span>RSI {_row["rsi"]}</span><span>ADX {_row.get("adx",0)}</span>
                 <span>Sharpe {_row.get("sharpe",0)}</span>
+                <span>거래량 {_vr_str}x</span>
+                <span style="color:#f5a623">거래대금 {_amt_str}</span>
+                <span style="color:#4d9fff">{_fr_str}</span>
             </div>
             <div style="display:flex;gap:3px;height:24px;font-size:0.7rem;font-family:'Noto Sans KR',sans-serif;font-weight:600;line-height:24px;margin-bottom:4px">
                 <div style="flex:{_m};background:linear-gradient(135deg,#4d9fff,#3a7bd5);color:#fff;text-align:center;border-radius:4px 0 0 4px;overflow:hidden;white-space:nowrap">모멘텀 {_m:.0f}</div>
