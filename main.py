@@ -2398,9 +2398,9 @@ with _tab_analysis:
                             naver_section = f"\n[네이버 수집 뉴스]\n{titles}"
 
                         # 프롬프트 정의 바로 윗줄에 이 코드를 추가하여 검색 시점을 동적으로 만듭니다.
-                            current_ym = now_kst().strftime("%Y년 %m월") # 예: 시간이 지나면 '2026년 4월', '2026년 5월'로 자동 변경됨
+                        current_ym = now_kst().strftime("%Y년 %m월")
 
-                            prompt = f"""당신은 피도 눈물도 없는 여의도 탑티어 프랍 트레이더입니다. 
+                        prompt = f"""당신은 피도 눈물도 없는 여의도 탑티어 프랍 트레이더입니다. 
     당신의 분석 하나에 누군가의 전 재산과 목숨이 걸려있습니다. 
     오늘 날짜는 정확히 [{today_str}]입니다.
 
@@ -2496,13 +2496,10 @@ with _tab_analysis:
                     ai_html = _re.sub(r'(?i)disclaimer.*?(?=\n\n|🌍)', '', ai_html, flags=_re.DOTALL)
                     ai_html = _re.sub(r'(?i)I am an AI.*?(?=\n\n|🌍)', '', ai_html, flags=_re.DOTALL)
                     ai_html = _re.sub(r'(?i)(?:Note|Warning|Caution)\s*:?\s*(?:I am|This is|The following).*?(?=\n\n|🌍)', '', ai_html, flags=_re.DOTALL)
-                    # 🌍 이전의 모든 텍스트 제거 (프롬프트에서 🌍로 시작하도록 지시함)
+                    # 🌍 이전의 불필요한 텍스트 제거 (프롬프트에서 🌍로 시작하도록 지시함)
                     _globe_idx = ai_html.find('🌍')
                     if _globe_idx > 0:
                         ai_html = ai_html[_globe_idx:]
-                    # 🌍가 없으면 Gemini가 제대로 응답하지 않은 것 → 폴백
-                    if '🌍' not in ai_html:
-                        ai_html = ""
                     ai_html = _re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', ai_html)
                     ai_html = _re.sub(r'<(tool_code|function_call|tool_result|code_execution)[^>]*>.*?</\1>', '', ai_html, flags=_re.DOTALL)
                     ai_html = ai_html.replace("\n", "<br>")                
