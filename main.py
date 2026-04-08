@@ -1725,47 +1725,49 @@ def _render_scanner():
         # ── 통합 카드: HTML 하나로 렌더 + AI 버튼만 별도 form ──
         _submitted = False
 
-        # 카드 전체 HTML (이름+스코어+가격+시그널+바 통합)
-        _card_html = f'''
-        <div class="scanner-card">
-            <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
-                <span class="scanner-rank rank-{_rank if _rank <= 3 else "other"}">{_rank}</span>
-                <span style="font-size:0.88rem;font-weight:600;color:#e2e8f0">{_row["name"]}</span>
-                <span style="font-size:0.68rem;color:#4a5568">{_code}</span>
-                <span class="scanner-score {_score_cls}">{_score:.0f}/100</span>
-            </div>
-            <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:8px">
-                <span style="font-family:'JetBrains Mono',monospace;font-size:1rem;font-weight:600;color:#e2e8f0">{_row["price"]:,}원</span>
-                <span style="font-size:0.8rem;color:{_chg_color};font-weight:600">{_chg_arrow} {abs(_row["change_pct"]):.2f}%</span>
-            </div>
-            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:6px">
-                {_signals_html}
-            </div>
-            <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;font-size:0.65rem;color:#8892a4">
-                <span>RSI {_row["rsi"]}</span><span>ADX {_row.get("adx",0)}</span>
-                <span>Sharpe {_row.get("sharpe",0)}</span>
-                <span>거래량 {_row.get("vol_ratio",0):.1f}x</span>
-                <span style="color:#f5a623">거래대금 {_amt_str}</span>
-                {_fr_html}
-            </div>
-            <p style="display:flex;gap:3px;height:24px;font-size:0.7rem;font-family:'Noto Sans KR',sans-serif;font-weight:600;line-height:24px;margin:0 0 4px 0">
-                <span style="flex:{_m};background:linear-gradient(135deg,#4d9fff,#3a7bd5);color:#fff;text-align:center;border-radius:4px 0 0 4px;overflow:hidden;white-space:nowrap;display:inline-block">모멘텀 {_m:.0f}</span>
-                <span style="flex:{max(_mr, 0.5)};background:linear-gradient(135deg,#f5a623,#e8961f);color:#fff;text-align:center;overflow:hidden;white-space:nowrap;display:inline-block">진입 {_mr:.0f}</span>
-                <span style="flex:{_t};background:linear-gradient(135deg,#38b2ac,#2d9f99);color:#fff;text-align:center;overflow:hidden;white-space:nowrap;display:inline-block">추세 {_t:.0f}</span>
-                <span style="flex:{max(_ra, 0.5)};background:linear-gradient(135deg,#9f7aea,#805ad5);color:#fff;text-align:center;overflow:hidden;white-space:nowrap;display:inline-block">리스크 {_ra:.0f}</span>
-                <span style="flex:{max(_su, 0.5)};background:linear-gradient(135deg,#e53e3e,#c53030);color:#fff;text-align:center;border-radius:0 4px 4px 0;overflow:hidden;white-space:nowrap;display:inline-block">수급 {_su:.0f}</span>
-            </p>
-            <p style="font-size:0.55rem;color:#4a5568;margin:0">모멘텀 /25 · 진입 /15 · 추세 /20 · 리스크 /15 · 수급 /25</p>
-        </div>
-        '''
+        # ── 카드 상단 HTML ──
+        _mr_v = max(_mr, 0.5)
+        _ra_v = max(_ra, 0.5)
+        _su_v = max(_su, 0.5)
+        _vr = f"{_row.get('vol_ratio',0):.1f}"
 
-        # AI 버튼 (카드 앞에 렌더, height:0 + top으로 카드 헤더에 고정)
+        _card_top = f'''<div class="scanner-card">
+<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+<span class="scanner-rank rank-{_rank if _rank <= 3 else "other"}">{_rank}</span>
+<span style="font-size:0.88rem;font-weight:600;color:#e2e8f0">{_row["name"]}</span>
+<span style="font-size:0.68rem;color:#4a5568">{_code}</span>
+<span class="scanner-score {_score_cls}">{_score:.0f}/100</span>
+</div>
+<div style="display:flex;align-items:baseline;gap:10px;margin-bottom:8px">
+<span style="font-family:monospace;font-size:1rem;font-weight:600;color:#e2e8f0">{_row["price"]:,}원</span>
+<span style="font-size:0.8rem;color:{_chg_color};font-weight:600">{_chg_arrow} {abs(_row["change_pct"]):.2f}%</span>
+</div>
+<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:6px">{_signals_html}</div>
+<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;font-size:0.65rem;color:#8892a4">
+<span>RSI {_row["rsi"]}</span><span>ADX {_row.get("adx",0)}</span>
+<span>Sharpe {_row.get("sharpe",0)}</span>
+<span>거래량 {_vr}x</span>
+<span style="color:#f5a623">거래대금 {_amt_str}</span>
+{_fr_html}</div></div>'''
+
+        # ── 바 차트 HTML (별도 렌더) ──
+        _bar_html = f'''<div style="display:flex;gap:3px;height:24px;font-size:0.7rem;font-family:sans-serif;font-weight:600;line-height:24px;margin:-12px 0 4px 0">
+<div style="flex:{_m};background:#3a7bd5;color:#fff;text-align:center;border-radius:4px 0 0 4px;overflow:hidden">모멘텀 {_m:.0f}</div>
+<div style="flex:{_mr_v};background:#e8961f;color:#fff;text-align:center;overflow:hidden">진입 {_mr:.0f}</div>
+<div style="flex:{_t};background:#2d9f99;color:#fff;text-align:center;overflow:hidden">추세 {_t:.0f}</div>
+<div style="flex:{_ra_v};background:#805ad5;color:#fff;text-align:center;overflow:hidden">리스크 {_ra:.0f}</div>
+<div style="flex:{_su_v};background:#c53030;color:#fff;text-align:center;border-radius:0 4px 4px 0;overflow:hidden">수급 {_su:.0f}</div>
+</div>
+<div style="font-size:0.55rem;color:#4a5568;margin-bottom:8px">모멘텀 /25 · 진입 /15 · 추세 /20 · 리스크 /15 · 수급 /25</div>'''
+
+        # ── 렌더 ──
+        _submitted = False
         if not _cached_ai and "GEMINI_API_KEY" in st.secrets:
             with st.form(key=f"scanner_{_code}", clear_on_submit=False, border=False):
                 _submitted = st.form_submit_button("✦ AI 예측")
 
-        # 카드 렌더
-        st.markdown(_card_html, unsafe_allow_html=True)
+        st.markdown(_card_top, unsafe_allow_html=True)
+        st.markdown(_bar_html, unsafe_allow_html=True)
 
         # AI 결과 (카드 HTML 밖 — Gemini 응답이 카드를 깨뜨리지 않음)
         if _cached_ai:
