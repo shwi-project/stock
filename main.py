@@ -12,6 +12,11 @@ import base64
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+# 외부 저장소(shwi-project/stocklens-mcp, MIT)에서 포팅한 추가 기능 모듈
+from features import rankings as _ext_rankings
+from features import themes as _ext_themes
+from features import deep_analysis as _ext_deep
+
 # ─────────────────────────────────────────────
 # 페이지 설정
 # ─────────────────────────────────────────────
@@ -1606,7 +1611,13 @@ _is_market_open = (_wd < 5 and 800 <= _hm <= 2000)
 # ─────────────────────────────────────────────
 # 전체 화면 탭: 종목 검색 / 추천 종목
 # ─────────────────────────────────────────────
-_tab_analysis, _tab_scanner = st.tabs(["📊 종목 검색", "🔎 추천 종목"])
+_tab_analysis, _tab_scanner, _tab_rankings, _tab_themes, _tab_deep = st.tabs([
+    "📊 종목 검색",
+    "🔎 추천 종목",
+    "📈 장중 랭킹",
+    "🏷️ 테마/섹터",
+    "🔬 종목 심층분석",
+])
 
 # ─── 탭 1: 종목 검색 (검색바 + 분석 결과) ───
 with _tab_analysis:
@@ -2572,3 +2583,28 @@ with _tab_analysis:
         except Exception as e:
             st.error(f"오류가 발생했습니다: {e}")
             st.exception(e)
+
+
+# ─────────────────────────────────────────────
+# 탭 3·4·5: stocklens-mcp에서 포팅한 추가 기능
+# ─────────────────────────────────────────────
+with _tab_rankings:
+    try:
+        _ext_rankings.render()
+    except Exception as e:
+        st.error(f"장중 랭킹 로딩 오류: {e}")
+
+with _tab_themes:
+    try:
+        _ext_themes.render()
+    except Exception as e:
+        st.error(f"테마/섹터 로딩 오류: {e}")
+
+with _tab_deep:
+    try:
+        _stock_options = [
+            (row["종목코드"], row["label"]) for _, row in all_stocks.iterrows()
+        ]
+        _ext_deep.render(_stock_options)
+    except Exception as e:
+        st.error(f"심층분석 로딩 오류: {e}")
