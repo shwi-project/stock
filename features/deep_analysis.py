@@ -66,9 +66,9 @@ def _indicator_section(code: str) -> None:
     # 가격 위치
     pos = result.get("position") or {}
     if pos:
-        st.caption(
-            f"52주 고점 {pos.get('high_52w'):,}원 ({pos.get('pct_from_high_52w')}%) · "
-            f"저점 {pos.get('low_52w'):,}원 ({pos.get('pct_from_low_52w')}%)"
+        st.markdown(
+            f"**52주 고점** {pos.get('high_52w'):,}원 ({pos.get('pct_from_high_52w')}%) · "
+            f"**저점** {pos.get('low_52w'):,}원 ({pos.get('pct_from_low_52w')}%)"
         )
 
     # Donchian 채널
@@ -82,8 +82,8 @@ def _indicator_section(code: str) -> None:
     # Volume Profile
     vp = result.get("volume_profile") or {}
     if vp and "error" not in vp:
-        st.caption(
-            f"매물대 POC {vp['poc']['price_range']} · 가치영역 "
+        st.markdown(
+            f"**매물대 POC** {vp['poc']['price_range']} · **가치영역** "
             f"{vp['value_area']['low']:,}~{vp['value_area']['high']:,} "
             f"(현재가 {'안' if vp['current_in_value_area'] else '밖'})"
         )
@@ -118,8 +118,8 @@ def _indicator_section(code: str) -> None:
     # 캔들
     candle = result.get("candle") or {}
     if candle:
-        st.caption(
-            f"최근 캔들 ({candle.get('date')}): {candle.get('color')} · "
+        st.markdown(
+            f"**최근 캔들 ({candle.get('date')})**: {candle.get('color')} · "
             f"몸통 {candle.get('body_pct')}% · 윗꼬리 {candle.get('upper_wick_pct')}% · "
             f"아래꼬리 {candle.get('lower_wick_pct')}% · 갭 {candle.get('gap_pct')}%"
         )

@@ -29,12 +29,18 @@ def render(code: str) -> None:
         return
 
     df = pd.DataFrame(rows)
+    df = df[["date", "source", "title", "link"]]
+    df.columns = ["날짜", "출처", "제목", "링크"]
 
-    def _link(row):
-        link = row["link"] or ""
-        return f"[{row['title']}]({link})" if link else row["title"]
-
-    df["제목"] = df.apply(_link, axis=1)
-    df = df[["date", "source", "제목"]]
-    df.columns = ["날짜", "출처", "제목"]
-    st.markdown(df.to_markdown(index=False), unsafe_allow_html=True)
+    st.dataframe(
+        df,
+        use_container_width=True,
+        hide_index=True,
+        height=500,
+        column_config={
+            "링크": st.column_config.LinkColumn(
+                "링크",
+                display_text="열기",
+            ),
+        },
+    )
