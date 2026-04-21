@@ -6,6 +6,7 @@ import pandas as pd
 import streamlit as st
 
 from features._async import run_sync
+from features._style import inject as _inject_style
 from sources import naver
 
 
@@ -30,6 +31,7 @@ def _sector_stocks(sector_id: str, count: int) -> list[dict]:
 
 
 def render() -> None:
+    _inject_style()
     st.markdown("### 🏷️ 테마 / 섹터 스크리닝")
     st.caption("네이버 증권 기준 약 280개 테마 + 79개 업종. 종목 클릭 시 코드 복사.")
 
@@ -63,10 +65,14 @@ def render() -> None:
         selected = themes[selection]
 
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("등락률", selected["change_rate"])
-        c2.metric("최근 3일", selected["recent_3d_rate"])
-        c3.metric("상승/보합/하락", f"{selected['up_count']}/{selected['flat_count']}/{selected['down_count']}")
-        c4.metric("주도주", ", ".join(l["name"] for l in selected.get("leaders", [])) or "-")
+        c1.metric("등락률", selected["change_rate"], border=True)
+        c2.metric("최근 3일", selected["recent_3d_rate"], border=True)
+        c3.metric("상승/보합/하락",
+                  f"{selected['up_count']}/{selected['flat_count']}/{selected['down_count']}",
+                  border=True)
+        c4.metric("주도주",
+                  ", ".join(l["name"] for l in selected.get("leaders", [])) or "-",
+                  border=True)
 
         try:
             stocks = _theme_stocks(selected["theme_id"], 50)
@@ -106,9 +112,11 @@ def render() -> None:
         selected = sectors[selection]
 
         c1, c2, c3 = st.columns(3)
-        c1.metric("등락률", selected["change_rate"])
-        c2.metric("종목 수", selected["total_count"])
-        c3.metric("상승/보합/하락", f"{selected['up_count']}/{selected['flat_count']}/{selected['down_count']}")
+        c1.metric("등락률", selected["change_rate"], border=True)
+        c2.metric("종목 수", selected["total_count"], border=True)
+        c3.metric("상승/보합/하락",
+                  f"{selected['up_count']}/{selected['flat_count']}/{selected['down_count']}",
+                  border=True)
 
         try:
             stocks = _sector_stocks(selected["sector_id"], 50)

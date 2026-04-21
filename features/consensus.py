@@ -40,9 +40,9 @@ def render(code: str, current_price: float | None = None) -> None:
                 f" ({(target - current_price) / current_price * 100:+.1f}%)"
                 if current_price else ""
             )
-            st.metric("애널리스트 목표주가", f"{target:,}원{up_pct}")
+            st.metric("애널리스트 목표주가", f"{target:,}원{up_pct}", border=True)
         else:
-            st.metric("애널리스트 목표주가", "-")
+            st.metric("애널리스트 목표주가", "-", border=True)
     with cols[1]:
         if opinion:
             order = ["매수", "강력매수", "중립", "매도", "강력매도"]
@@ -51,9 +51,9 @@ def render(code: str, current_price: float | None = None) -> None:
                 key=lambda x: order.index(x[0]) if x[0] in order else 99,
             )
             text = " · ".join(f"{k} {v}" for k, v in sorted_op if v)
-            st.metric("투자의견 분포", text or "-")
+            st.metric("투자의견 분포", text or "-", border=True)
         else:
-            st.metric("투자의견 분포", "-")
+            st.metric("투자의견 분포", "-", border=True)
 
     history = c.get("target_price_history") or []
     if history:

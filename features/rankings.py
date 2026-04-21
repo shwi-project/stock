@@ -6,6 +6,7 @@ import pandas as pd
 import streamlit as st
 
 from features._async import run_sync
+from features._style import inject as _inject_style
 from sources import naver
 
 
@@ -41,6 +42,7 @@ def _market_cap(market: str, count: int) -> list[dict]:
 
 
 def render() -> None:
+    _inject_style()
     st.markdown("### 📈 장중 랭킹")
     st.caption("네이버 증권 기준. 캐시 TTL 2~10분.")
 

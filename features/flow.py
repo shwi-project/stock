@@ -40,8 +40,8 @@ def render(code: str, days: int = 20) -> None:
     foreign_sum = int(df["foreign"].sum())
 
     c1, c2 = st.columns(2)
-    c1.metric(f"기관 {days}일 누적", _fmt(inst_sum))
-    c2.metric(f"외국인 {days}일 누적", _fmt(foreign_sum))
+    c1.metric(f"기관 {days}일 누적", _fmt(inst_sum), border=True)
+    c2.metric(f"외국인 {days}일 누적", _fmt(foreign_sum), border=True)
 
     df_chart = df[["date", "institutional", "foreign"]].iloc[::-1].copy()
     df_chart.columns = ["date", "기관", "외국인"]

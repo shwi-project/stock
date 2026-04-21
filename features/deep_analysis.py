@@ -16,6 +16,7 @@ import streamlit as st
 
 from features import consensus, disclosure, flow, indicators_ext
 from features._async import run_sync
+from features._style import inject as _inject_style
 from sources import naver
 
 
@@ -50,18 +51,23 @@ def _indicator_section(code: str) -> None:
     # 요약 카드
     cards = st.columns(4)
     phase = result.get("ma_phase") or {}
-    cards[0].metric("이평 Phase", phase.get("phase_label") or "-")
+    cards[0].metric("이평 Phase", phase.get("phase_label") or "-", border=True)
     rsi = result.get("rsi") or {}
-    cards[1].metric("RSI(14)", rsi.get("value") or "-", delta=rsi.get("state"))
+    cards[1].metric("RSI(14)", rsi.get("value") or "-", delta=rsi.get("state"), border=True)
     macd = result.get("macd") or {}
     cards[2].metric(
         "MACD 히스토그램",
         macd.get("histogram") if macd.get("histogram") is not None else "-",
         delta=(macd.get("cross") or {}).get("type_label"),
+        border=True,
     )
     bb = result.get("bollinger") or {}
-    cards[3].metric("볼린저 위치", bb.get("position") or "-",
-                    delta=f"%B={bb.get('percent_b')}" if bb.get("percent_b") is not None else None)
+    cards[3].metric(
+        "볼린저 위치",
+        bb.get("position") or "-",
+        delta=f"%B={bb.get('percent_b')}" if bb.get("percent_b") is not None else None,
+        border=True,
+    )
 
     # 가격 위치
     pos = result.get("position") or {}
@@ -75,9 +81,9 @@ def _indicator_section(code: str) -> None:
     pc = result.get("price_channel") or {}
     if pc and "error" not in pc:
         c1, c2, c3 = st.columns(3)
-        c1.metric("Donchian 상단", f"{pc.get('upper'):,}")
-        c2.metric("위치", f"{pc.get('position_pct')}% ({pc.get('state')})")
-        c3.metric("폭(변동성)", f"{pc.get('width_pct')}%")
+        c1.metric("Donchian 상단", f"{pc.get('upper'):,}", border=True)
+        c2.metric("위치", f"{pc.get('position_pct')}% ({pc.get('state')})", border=True)
+        c3.metric("폭(변동성)", f"{pc.get('width_pct')}%", border=True)
 
     # Volume Profile
     vp = result.get("volume_profile") or {}
@@ -132,6 +138,7 @@ def render(stock_options: Sequence[tuple[str, str]] | None = None) -> None:
         stock_options: (code, label) 튜플 시퀀스. main.py가 load_all_stocks로
             만든 것을 그대로 재사용. None이면 직접 코드 입력 박스로 대체.
     """
+    _inject_style()
     st.markdown("### 🔬 종목 심층분석")
     st.caption("네이버·wisereport 데이터 기반. 컨센서스·고급 지표·수급·공시 통합 조회.")
 
