@@ -1815,6 +1815,35 @@ with _tab_scanner:
     _render_scanner()
 
 
+# ─────────────────────────────────────────────
+# 탭 3·4·5: stocklens-mcp에서 포팅한 추가 기능
+# _tab_analysis 블록에 st.stop()이 있어 뒤에 두면 초기 상태에서 렌더되지 않음 → 위에 배치
+# ─────────────────────────────────────────────
+with _tab_rankings:
+    try:
+        _ext_rankings.render()
+    except Exception as e:
+        st.error(f"장중 랭킹 로딩 오류: {e}")
+        st.exception(e)
+
+with _tab_themes:
+    try:
+        _ext_themes.render()
+    except Exception as e:
+        st.error(f"테마/섹터 로딩 오류: {e}")
+        st.exception(e)
+
+with _tab_deep:
+    try:
+        _stock_options = [
+            (row["종목코드"], row["label"]) for _, row in all_stocks.iterrows()
+        ]
+        _ext_deep.render(_stock_options)
+    except Exception as e:
+        st.error(f"심층분석 로딩 오류: {e}")
+        st.exception(e)
+
+
 with _tab_analysis:
 
     # ─── 종목 분석 로직 (탭 밖에서 계산, 결과는 _tab_analysis에 렌더) ───
@@ -2583,31 +2612,3 @@ with _tab_analysis:
         except Exception as e:
             st.error(f"오류가 발생했습니다: {e}")
             st.exception(e)
-
-
-# ─────────────────────────────────────────────
-# 탭 3·4·5: stocklens-mcp에서 포팅한 추가 기능
-# ─────────────────────────────────────────────
-with _tab_rankings:
-    try:
-        _ext_rankings.render()
-    except Exception as e:
-        st.error(f"장중 랭킹 로딩 오류: {e}")
-        st.exception(e)
-
-with _tab_themes:
-    try:
-        _ext_themes.render()
-    except Exception as e:
-        st.error(f"테마/섹터 로딩 오류: {e}")
-        st.exception(e)
-
-with _tab_deep:
-    try:
-        _stock_options = [
-            (row["종목코드"], row["label"]) for _, row in all_stocks.iterrows()
-        ]
-        _ext_deep.render(_stock_options)
-    except Exception as e:
-        st.error(f"심층분석 로딩 오류: {e}")
-        st.exception(e)
