@@ -9,7 +9,7 @@ from features._async import run_sync
 from sources import naver
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner="공시 불러오는 중...")
 def _disclosures(code: str, page: int) -> list[dict]:
     return run_sync(naver.get_disclosure_list(code, page))
 

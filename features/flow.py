@@ -9,7 +9,7 @@ from features._async import run_sync
 from sources import naver
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner="수급 데이터 불러오는 중...")
 def _flow(code: str, days: int) -> list[dict]:
     return run_sync(naver.get_investor_flow(code, days))
 

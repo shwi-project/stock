@@ -2593,12 +2593,14 @@ with _tab_rankings:
         _ext_rankings.render()
     except Exception as e:
         st.error(f"장중 랭킹 로딩 오류: {e}")
+        st.exception(e)
 
 with _tab_themes:
     try:
         _ext_themes.render()
     except Exception as e:
         st.error(f"테마/섹터 로딩 오류: {e}")
+        st.exception(e)
 
 with _tab_deep:
     try:
@@ -2608,3 +2610,4 @@ with _tab_deep:
         _ext_deep.render(_stock_options)
     except Exception as e:
         st.error(f"심층분석 로딩 오류: {e}")
+        st.exception(e)

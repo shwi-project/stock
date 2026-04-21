@@ -9,22 +9,22 @@ from features._async import run_sync
 from sources import naver
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner="테마 목록 불러오는 중...")
 def _themes_all() -> list[dict]:
     return run_sync(naver.list_themes_all(), timeout=60.0)
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner="테마 종목 불러오는 중...")
 def _theme_stocks(theme_id: str, count: int) -> list[dict]:
     return run_sync(naver.get_theme_stocks(theme_id, count))
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner="업종 목록 불러오는 중...")
 def _sectors() -> list[dict]:
     return run_sync(naver.list_sectors())
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner="업종 종목 불러오는 중...")
 def _sector_stocks(sector_id: str, count: int) -> list[dict]:
     return run_sync(naver.get_sector_stocks(sector_id, count))
 

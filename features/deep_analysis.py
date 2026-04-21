@@ -19,7 +19,7 @@ from features._async import run_sync
 from sources import naver
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner="OHLCV 불러오는 중...")
 def _ohlcv(code: str, count: int) -> list[dict]:
     return run_sync(naver.get_ohlcv(code, "day", count))
 

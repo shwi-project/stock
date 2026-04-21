@@ -25,17 +25,17 @@ def _format_money_won(v: int) -> str:
     return f"{v:,}"
 
 
-@st.cache_data(ttl=120, show_spinner=False)
+@st.cache_data(ttl=120, show_spinner="거래대금 랭킹 불러오는 중...")
 def _volume(market: str, count: int, sort_by: str) -> list[dict]:
     return run_sync(naver.get_volume_ranking(market=market, count=count, sort_by=sort_by))
 
 
-@st.cache_data(ttl=120, show_spinner=False)
+@st.cache_data(ttl=120, show_spinner="등락률 랭킹 불러오는 중...")
 def _change(direction: str, market: str, count: int) -> list[dict]:
     return run_sync(naver.get_change_ranking(direction=direction, market=market, count=count))
 
 
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=600, show_spinner="시가총액 랭킹 불러오는 중...")
 def _market_cap(market: str, count: int) -> list[dict]:
     return run_sync(naver.get_market_cap_ranking(market=market, count=count))
 

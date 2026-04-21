@@ -9,12 +9,12 @@ from features._async import run_sync
 from sources import naver
 
 
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=600, show_spinner="컨센서스 불러오는 중...")
 def _consensus(code: str) -> dict:
     return run_sync(naver.get_consensus(code))
 
 
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=600, show_spinner="리포트 불러오는 중...")
 def _reports(code: str, count: int) -> list[dict]:
     return run_sync(naver.get_reports(code, count))
 
